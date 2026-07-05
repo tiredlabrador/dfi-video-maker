@@ -1,0 +1,25 @@
+# Audio tracks — copyrighted, NEVER commit these
+0 - Test/
+*.mp3
+*.flac
+
+# Generated videos
+output/
+
+# Python virtual environment + caches
+venv/
+__pycache__/
+.pytest_cache/
+
+# Synthetic test litter
+_synthetic_*.png
+_synthetic_*.mp3
+
+# macOS
+.DS_Store
+
+# Machine-local Claude settings
+.claude/settings.local.json
+
+# Stray duplicate
+assets/overlay copy.png
