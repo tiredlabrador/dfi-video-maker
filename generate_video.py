@@ -27,7 +27,7 @@ import tempfile
 from dataclasses import dataclass
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 # ---------------------------------------------------------------------------
 # CONFIG  — used only when running this file standalone (Phase 1). The Colab
@@ -41,7 +41,11 @@ FPS                 = 30           # frames per second
 CANVAS_W            = 1080         # output width  (1080 = 1:1 square)
 CANVAS_H            = 1080         # output height (set 1350 for 4:5, etc.)
 CIRCLE_DIAMETER     = 790          # diameter of the spinning record, in pixels
+HOLE_DIAMETER       = 24           # centre spindle hole (0 = no hole)
 BG_COLOUR           = "black"      # canvas background (any Pillow colour name/hex)
+FALLBACK_PATH       = None         # static PNG used when a track has no artwork
+FALLBACK_TEXT       = False        # or True to generate a title/artist card instead
+FONT_PATH           = None         # brand font for the card (None = a default)
 OVERLAY_PATH        = "assets/overlay.png"  # static branding overlay (None to skip)
 MOTION_BLUR_SAMPLES = 10           # frames blended per output frame (1 = no blur)
 SHUTTER_FRACTION    = 0.7          # blur amount; 0.5 = 180-degree shutter, higher = more
@@ -63,8 +67,15 @@ class RenderConfig:
     canvas_w: int = 1080
     canvas_h: int = 1080
     circle_diameter: int = 790
+    hole_diameter: int = 24       # centre spindle hole, so it reads as a real record
     bg_colour: str = "black"
     overlay_path: str = None      # optional static branding overlay (PNG w/ alpha)
+    # Fallback artwork, used only when a track has no embedded art and no override.
+    fallback_path: str = None     # a static PNG to use as the disc
+    fallback_text: bool = False   # or generate a card with the track title + artist
+    fallback_bg: str = "white"    # background of the generated text card
+    fallback_fg: str = "black"    # text colour of the generated text card
+    font_path: str = None         # brand font (.ttf/.otf); None = pick a default
     motion_blur_samples: int = 1  # 1 = off; >1 enables 180-degree-style motion blur
     shutter_fraction: float = 0.5 # 0.5 = a 180-degree shutter (blur spans half a frame)
 
@@ -160,12 +171,77 @@ def extract_embedded_artwork(audio_path: str):
         raise RenderError(f"Embedded artwork could not be decoded as an image: {exc}")
 
 
-def load_artwork(audio_path: str, artwork_path):
+# Fonts we'll try, in order, when no brand font is configured. First one that
+# exists wins. Colab/Ubuntu ships DejaVu; macOS ships Arial/Helvetica.
+DEFAULT_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+)
+
+
+def _load_font(cfg: RenderConfig, size: int):
+    """Load the configured brand font, or the first available default."""
+    candidates = ([cfg.font_path] if cfg.font_path else []) + list(DEFAULT_FONT_CANDIDATES)
+    for path in candidates:
+        if path and os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    return ImageFont.load_default()      # last resort: tiny bitmap font
+
+
+def _fit_font(draw, text: str, max_width: int, cfg: RenderConfig, start_size: int):
+    """Shrink the font until `text` fits inside `max_width`."""
+    size = start_size
+    while size > 10:
+        font = _load_font(cfg, size)
+        box = draw.textbbox((0, 0), text, font=font)
+        if (box[2] - box[0]) <= max_width:
+            return font
+        size -= 2
+    return _load_font(cfg, 10)
+
+
+def make_fallback_card(track: str, artist: str, size: int,
+                       cfg: RenderConfig) -> Image.Image:
+    """
+    Generate a plain card with the track title above centre and the artist below,
+    leaving the middle clear for the spindle hole. Used when a track has no
+    artwork. Text is auto-shrunk so long titles stay inside the disc.
+    """
+    card = Image.new("RGBA", (size, size), cfg.fallback_bg)
+    draw = ImageDraw.Draw(card)
+
+    # Keep text well inside the circle — the card gets a circular mask later.
+    max_width = int(size * 0.62)
+    centre = size / 2
+
+    for text, y_frac in ((str(track or "").upper(), 0.38),
+                         (str(artist or "").upper(), 0.62)):
+        if not text:
+            continue
+        font = _fit_font(draw, text, max_width, cfg, start_size=int(size * 0.075))
+        box = draw.textbbox((0, 0), text, font=font)
+        x = centre - (box[2] - box[0]) / 2 - box[0]
+        y = size * y_frac - (box[3] - box[1]) / 2 - box[1]
+        draw.text((x, y), text, font=font, fill=cfg.fallback_fg)
+
+    return card
+
+
+def load_artwork(audio_path: str, artwork_path, cfg: "RenderConfig" = None,
+                 track: str = None, artist: str = None):
     """
     Resolve the artwork to use, in priority order:
       1. `artwork_path` override, if given.
-      2. Otherwise the audio's embedded cover art.
-    Raise NoArtworkError if neither is available.
+      2. The audio's embedded cover art.
+      3. cfg.fallback_path — a static PNG stand-in.
+      4. cfg.fallback_text — a generated card with the track title + artist.
+    Raise NoArtworkError if none of those are available.
     """
     if artwork_path:
         try:
@@ -174,18 +250,36 @@ def load_artwork(audio_path: str, artwork_path):
             raise RenderError(f"Override artwork could not be read ({artwork_path}): {exc}")
 
     art = extract_embedded_artwork(audio_path)
-    if art is None:
-        raise NoArtworkError(
-            f"No embedded artwork in {os.path.basename(audio_path)} and no override supplied."
-        )
-    return art
+    if art is not None:
+        return art
+
+    if cfg is not None and cfg.fallback_path:
+        if not os.path.exists(cfg.fallback_path):
+            raise RenderError(f"Fallback artwork not found: {cfg.fallback_path}")
+        try:
+            return Image.open(cfg.fallback_path).convert("RGBA")
+        except Exception as exc:
+            raise RenderError(f"Fallback artwork could not be read: {exc}")
+
+    if cfg is not None and cfg.fallback_text:
+        return make_fallback_card(track, artist, cfg.circle_diameter, cfg)
+
+    raise NoArtworkError(
+        f"No embedded artwork in {os.path.basename(audio_path)}, no override, "
+        f"and no fallback configured."
+    )
 
 
 # ---------------------------------------------------------------------------
 # Image prep + frame rendering
 # ---------------------------------------------------------------------------
-def make_record(art: Image.Image, diameter: int) -> Image.Image:
-    """Centre-crop to square, resize to `diameter`, apply a circular alpha mask."""
+def make_record(art: Image.Image, diameter: int, hole_diameter: int = 0) -> Image.Image:
+    """
+    Centre-crop to square, resize to `diameter`, apply a circular alpha mask.
+
+    If `hole_diameter` > 0, punch a transparent spindle hole through the centre so
+    it reads as a real record (the canvas behind shows through).
+    """
     w, h = art.size
     side = min(w, h)
     left = (w - side) // 2
@@ -194,12 +288,15 @@ def make_record(art: Image.Image, diameter: int) -> Image.Image:
         (diameter, diameter), Image.LANCZOS
     )
 
-    # Anti-aliased circular mask: render at 4x then downsample.
+    # Anti-aliased mask: render at 4x then downsample.
     scale = 4
     big = Image.new("L", (diameter * scale, diameter * scale), 0)
-    ImageDraw.Draw(big).ellipse(
-        [0, 0, diameter * scale - 1, diameter * scale - 1], fill=255
-    )
+    draw = ImageDraw.Draw(big)
+    draw.ellipse([0, 0, diameter * scale - 1, diameter * scale - 1], fill=255)
+    if hole_diameter and hole_diameter > 0:
+        r = (hole_diameter * scale) / 2.0
+        c = (diameter * scale) / 2.0
+        draw.ellipse([c - r, c - r, c + r, c + r], fill=0)   # punch the hole
     mask = big.resize((diameter, diameter), Image.LANCZOS)
 
     square.putalpha(mask)
@@ -320,7 +417,7 @@ def build_output(spin_path: str, audio_path: str, start: float, out_path: str,
 # The reusable entry point
 # ---------------------------------------------------------------------------
 def render_video(audio_path: str, artwork_path, clip_start, output_path: str,
-                 cfg: RenderConfig) -> str:
+                 cfg: RenderConfig, track: str = None, artist: str = None) -> str:
     """
     Render one spinning-record MP4.
 
@@ -340,8 +437,8 @@ def render_video(audio_path: str, artwork_path, clip_start, output_path: str,
         raise RenderError("spin_period_seconds * fps must be >= 1 frame.")
     start = parse_timecode(clip_start)
 
-    art = load_artwork(audio_path, artwork_path)      # may raise NoArtworkError
-    record = make_record(art, cfg.circle_diameter)
+    art = load_artwork(audio_path, artwork_path, cfg, track, artist)  # may raise NoArtworkError
+    record = make_record(art, cfg.circle_diameter, cfg.hole_diameter)
     overlay = load_overlay(cfg)                        # static branding, or None
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
@@ -489,7 +586,11 @@ def main() -> None:
         canvas_w=CANVAS_W,
         canvas_h=CANVAS_H,
         circle_diameter=CIRCLE_DIAMETER,
+        hole_diameter=HOLE_DIAMETER,
         bg_colour=BG_COLOUR,
+        fallback_path=FALLBACK_PATH,
+        fallback_text=FALLBACK_TEXT,
+        font_path=FONT_PATH,
         overlay_path=OVERLAY_PATH if OVERLAY_PATH and os.path.exists(OVERLAY_PATH) else None,
         motion_blur_samples=MOTION_BLUR_SAMPLES,
         shutter_fraction=SHUTTER_FRACTION,
