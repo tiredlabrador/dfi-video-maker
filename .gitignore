@@ -23,3 +23,6 @@ _synthetic_*.mp3
 
 # Stray duplicate
 assets/overlay copy.png
+
+# Backup copies
+*.bak
