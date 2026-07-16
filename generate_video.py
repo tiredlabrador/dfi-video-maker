@@ -40,7 +40,7 @@ SPIN_PERIOD_SECONDS = 6            # time for one full 360-degree rotation
 FPS                 = 30           # frames per second
 CANVAS_W            = 1080         # output width  (1080 = 1:1 square)
 CANVAS_H            = 1080         # output height (set 1350 for 4:5, etc.)
-CIRCLE_DIAMETER     = 790          # diameter of the spinning record, in pixels
+CIRCLE_DIAMETER     = 710          # diameter of the spinning record, in pixels
 HOLE_DIAMETER       = 24           # centre spindle hole (0 = no hole)
 BG_COLOUR           = "black"      # canvas background (any Pillow colour name/hex)
 FALLBACK_PATH       = None         # static PNG used when a track has no artwork
@@ -66,10 +66,19 @@ class RenderConfig:
     fps: int = 30
     canvas_w: int = 1080
     canvas_h: int = 1080
-    circle_diameter: int = 790
+    circle_diameter: int = 710
     hole_diameter: int = 24       # centre spindle hole, so it reads as a real record
+    disc_offset_y: int = -40      # nudge the record up (-) or down (+) from centre
     bg_colour: str = "black"
     overlay_path: str = None      # optional static branding overlay (PNG w/ alpha)
+    # Burnt-in caption: the track title + artist, drawn bottom-left. Static — it
+    # does not spin with the record.
+    caption: bool = True
+    caption_colour: str = "white"
+    caption_margin: int = 60      # gap from the left and bottom edges
+    caption_max_lines: int = 2    # title wraps up to this many lines, then shrinks
+    caption_title_size: int = None    # None = scale from the canvas height
+    caption_artist_size: int = None   # None = scale from the canvas height
     # Fallback artwork, used only when a track has no embedded art and no override.
     fallback_path: str = None     # a static PNG to use as the disc
     fallback_text: bool = False   # or generate a card with the track title + artist
@@ -204,6 +213,93 @@ def _fit_font(draw, text: str, max_width: int, cfg: RenderConfig, start_size: in
             return font
         size -= 2
     return _load_font(cfg, 10)
+
+
+def _wrap_text(draw, text: str, font, max_width: int):
+    """Greedily break `text` into lines that each fit inside `max_width`."""
+    lines, current = [], ""
+    for word in text.split():
+        trial = (current + " " + word).strip()
+        if not current or draw.textlength(trial, font=font) <= max_width:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _fit_caption(draw, text: str, cfg: RenderConfig, max_width: int,
+                 max_lines: int, start_size: int):
+    """Shrink the font until `text` wraps into at most `max_lines` lines."""
+    size = start_size
+    font = _load_font(cfg, size)
+    lines = _wrap_text(draw, text, font, max_width)
+    while len(lines) > max_lines and size > 12:
+        size -= 2
+        font = _load_font(cfg, size)
+        lines = _wrap_text(draw, text, font, max_width)
+    return font, lines[:max_lines]
+
+
+def _baseline_draw(draw, x: int, baseline_y: int, text: str, font, fill):
+    """Draw `text` so its baseline sits on `baseline_y` (PIL draws from the top)."""
+    try:
+        ascent, _ = font.getmetrics()
+    except AttributeError:            # bitmap fallback font
+        ascent = getattr(font, "size", 12)
+    draw.text((x, baseline_y - ascent), text, font=font, fill=fill)
+
+
+def draw_caption(layer: Image.Image, track: str, artist: str,
+                 cfg: RenderConfig) -> None:
+    """
+    Draw the track title and artist bottom-left on `layer`, stacked upwards from
+    the bottom margin: artist on the last line, title (1..max_lines) above it.
+    """
+    if not cfg.caption:
+        return
+    track = str(track or "").strip().upper()
+    artist = str(artist or "").strip().upper()
+    if not track and not artist:
+        return
+
+    draw = ImageDraw.Draw(layer)
+    margin = cfg.caption_margin
+    max_width = cfg.canvas_w - 2 * margin
+    title_size = cfg.caption_title_size or max(12, int(cfg.canvas_h * 0.045))
+    artist_size = cfg.caption_artist_size or max(10, int(cfg.canvas_h * 0.028))
+
+    title_font, title_lines = (None, [])
+    if track:
+        title_font, title_lines = _fit_caption(
+            draw, track, cfg, max_width, cfg.caption_max_lines, title_size
+        )
+
+    baseline = cfg.canvas_h - margin
+    if artist:
+        artist_font = _load_font(cfg, artist_size)
+        _baseline_draw(draw, margin, baseline, artist, artist_font, cfg.caption_colour)
+        baseline -= int(artist_size * 1.45)
+
+    for line in reversed(title_lines):
+        _baseline_draw(draw, margin, baseline, line, title_font, cfg.caption_colour)
+        baseline -= int(title_size * 1.15)
+
+
+def build_static_layer(cfg: RenderConfig, track: str = None,
+                       artist: str = None) -> Image.Image:
+    """
+    The everything-that-doesn't-spin layer: branding overlay + burnt-in caption,
+    composed once and stamped onto every frame.
+    """
+    layer = Image.new("RGBA", (cfg.canvas_w, cfg.canvas_h), (0, 0, 0, 0))
+    overlay = load_overlay(cfg)
+    if overlay is not None:
+        layer.alpha_composite(overlay)
+    draw_caption(layer, track, artist, cfg)
+    return layer
 
 
 def make_fallback_card(track: str, artist: str, size: int,
@@ -359,7 +455,7 @@ def render_frames(record: Image.Image, frames_dir: str, num_frames: int,
         rotated = _rotate_sharp(spin_source, i * step)
         canvas = Image.new("RGBA", (cfg.canvas_w, cfg.canvas_h), cfg.bg_colour)
         ox = (cfg.canvas_w - record.width) // 2
-        oy = (cfg.canvas_h - record.height) // 2
+        oy = (cfg.canvas_h - record.height) // 2 + cfg.disc_offset_y
         canvas.alpha_composite(rotated, (ox, oy))
         if overlay is not None:
             canvas.alpha_composite(overlay)      # static branding, on top
@@ -439,7 +535,7 @@ def render_video(audio_path: str, artwork_path, clip_start, output_path: str,
 
     art = load_artwork(audio_path, artwork_path, cfg, track, artist)  # may raise NoArtworkError
     record = make_record(art, cfg.circle_diameter, cfg.hole_diameter)
-    overlay = load_overlay(cfg)                        # static branding, or None
+    overlay = build_static_layer(cfg, track, artist)   # branding + burnt-in caption
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="dfi_frames_") as frames_dir:
