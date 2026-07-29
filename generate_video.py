@@ -330,6 +330,53 @@ def make_fallback_card(track: str, artist: str, size: int,
     return card
 
 
+def resolve_artwork(audio_path: str, artwork_path, cfg: "RenderConfig" = None,
+                    track: str = None, artist: str = None):
+    """
+    Same resolution as load_artwork, but also reports WHERE the artwork came from:
+    "override" | "embedded" | "fallback" | "card". That source is the useful QA
+    signal — "embedded" art from an unknown rip is the risky one to eyeball.
+    """
+    if artwork_path:
+        return load_artwork(audio_path, artwork_path, cfg, track, artist), "override"
+    if extract_embedded_artwork(audio_path) is not None:
+        return load_artwork(audio_path, None, cfg, track, artist), "embedded"
+    if cfg is not None and cfg.fallback_path:
+        return load_artwork(audio_path, None, cfg, track, artist), "fallback"
+    return load_artwork(audio_path, None, cfg, track, artist), "card"
+
+
+def make_contact_sheet(items, cols: int = 3, thumb: int = 300, pad: int = 14,
+                       cfg: "RenderConfig" = None) -> Image.Image:
+    """
+    Build one labelled grid image from `items` — a list of (image_or_None, label).
+    Used for the artwork QA pass: see every cover at once before rendering.
+    """
+    cfg = cfg or RenderConfig()
+    cols = max(1, cols)
+    rows = max(1, (len(items) + cols - 1) // cols)
+    label_h = max(18, int(thumb * 0.17))
+    cell_w, cell_h = thumb + pad, thumb + label_h + pad
+    sheet = Image.new("RGB", (pad + cols * cell_w, pad + rows * cell_h), (18, 18, 18))
+    draw = ImageDraw.Draw(sheet)
+    font = _load_font(cfg, max(11, int(thumb * 0.058)))
+
+    for i, (image, label) in enumerate(items):
+        x = pad + (i % cols) * cell_w
+        y = pad + (i // cols) * cell_h
+        if image is None:                       # a row we couldn't load
+            draw.rectangle([x, y, x + thumb, y + thumb], fill=(60, 30, 30))
+            draw.text((x + 8, y + thumb // 2), "no image", font=font, fill=(255, 140, 140))
+        else:
+            t = image.convert("RGB").copy()
+            t.thumbnail((thumb, thumb), Image.LANCZOS)
+            sheet.paste(t, (x + (thumb - t.width) // 2, y + (thumb - t.height) // 2))
+        for j, line in enumerate(str(label).split("\n")[:2]):
+            draw.text((x + 2, y + thumb + 4 + j * (label_h // 2)),
+                      line[:46], font=font, fill=(235, 235, 235))
+    return sheet
+
+
 def load_artwork(audio_path: str, artwork_path, cfg: "RenderConfig" = None,
                  track: str = None, artist: str = None):
     """
