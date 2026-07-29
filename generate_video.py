@@ -38,15 +38,16 @@ CLIP_START          = "1:13"       # "mm:ss" (or plain seconds) where the clip b
 CLIP_LENGTH_SECONDS = 25           # length of the output clip, in seconds
 SPIN_PERIOD_SECONDS = 6            # time for one full 360-degree rotation
 FPS                 = 30           # frames per second
-CANVAS_W            = 1080         # output width  (1080 = 1:1 square)
-CANVAS_H            = 1080         # output height (set 1350 for 4:5, etc.)
-CIRCLE_DIAMETER     = 710          # diameter of the spinning record, in pixels
+CANVAS_W            = 1080         # output width
+CANVAS_H            = 1350         # output height (1350 = 4:5; set 1080 for square)
+CIRCLE_DIAMETER     = 830          # diameter of the spinning record, in pixels
 HOLE_DIAMETER       = 24           # centre spindle hole (0 = no hole)
+DISC_OFFSET_Y       = -48          # nudge the record up (-) / down (+) from centre
 BG_COLOUR           = "black"      # canvas background (any Pillow colour name/hex)
 FALLBACK_PATH       = None         # static PNG used when a track has no artwork
 FALLBACK_TEXT       = False        # or True to generate a title/artist card instead
 FONT_PATH           = None         # brand font for the card (None = a default)
-OVERLAY_PATH        = "assets/overlay.png"  # static branding overlay (None to skip)
+OVERLAY_PATH        = "assets/overlay-portrait.png"  # must match the canvas shape
 MOTION_BLUR_SAMPLES = 10           # frames blended per output frame (1 = no blur)
 SHUTTER_FRACTION    = 0.7          # blur amount; 0.5 = 180-degree shutter, higher = more
 OUTPUT_DIR          = "output"     # folder the finished MP4 is written to
@@ -65,10 +66,10 @@ class RenderConfig:
     spin_period_seconds: int = 6
     fps: int = 30
     canvas_w: int = 1080
-    canvas_h: int = 1080
-    circle_diameter: int = 710
+    canvas_h: int = 1350          # 1080x1350 = 4:5, the Instagram grid format
+    circle_diameter: int = 830
     hole_diameter: int = 24       # centre spindle hole, so it reads as a real record
-    disc_offset_y: int = -40      # nudge the record up (-) or down (+) from centre
+    disc_offset_y: int = -48      # nudge the record up (-) or down (+) from centre
     bg_colour: str = "black"
     overlay_path: str = None      # optional static branding overlay (PNG w/ alpha)
     # Burnt-in caption: the track title + artist, drawn bottom-left. Static — it
@@ -470,6 +471,14 @@ def load_overlay(cfg: RenderConfig):
         raise RenderError(f"Overlay image not found: {cfg.overlay_path}")
     overlay = Image.open(cfg.overlay_path).convert("RGBA")
     if overlay.size != (cfg.canvas_w, cfg.canvas_h):
+        # Same shape, different size => a clean scale. Different shape => the
+        # branding would be stretched, so say so loudly rather than ship it squashed.
+        if abs(overlay.width / overlay.height - cfg.canvas_w / cfg.canvas_h) > 0.01:
+            print(
+                f"WARNING: overlay is {overlay.width}x{overlay.height} but the canvas "
+                f"is {cfg.canvas_w}x{cfg.canvas_h}. The branding will be STRETCHED. "
+                f"Use an overlay matching the canvas shape."
+            )
         overlay = overlay.resize((cfg.canvas_w, cfg.canvas_h), Image.LANCZOS)
     return overlay
 
@@ -683,6 +692,7 @@ def main() -> None:
         canvas_h=CANVAS_H,
         circle_diameter=CIRCLE_DIAMETER,
         hole_diameter=HOLE_DIAMETER,
+        disc_offset_y=DISC_OFFSET_Y,
         bg_colour=BG_COLOUR,
         fallback_path=FALLBACK_PATH,
         fallback_text=FALLBACK_TEXT,

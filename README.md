@@ -47,7 +47,7 @@ labelled `CONFIG` block at the top of `generate_video.py`:
 | `CLIP_LENGTH_SECONDS` | `25` | Length of the output clip |
 | `SPIN_PERIOD_SECONDS` | `6` | Time for one full 360° rotation |
 | `FPS` | `30` | Frames per second |
-| `CANVAS_W` / `CANVAS_H` | `1080` / `1080` | Output size (set `1350` height for 4:5) |
+| `CANVAS_W` / `CANVAS_H` | `1080` / `1350` | Output size (4:5). Set height `1080` for square — and use an overlay of the same shape |
 | `CIRCLE_DIAMETER` | `960` | Diameter of the spinning record, in pixels |
 | `BG_COLOUR` | `black` | Canvas background (any Pillow colour name/hex) |
 | `OUTPUT_DIR` | `output` | Where the finished MP4 is written |
@@ -81,7 +81,7 @@ pipeline on it — so you can verify everything end to end with zero setup.
 The finished video lands in `OUTPUT_DIR/` named after the source track, e.g.
 `output/Midland - In The Mood For Love.mp4`.
 ```
-Dimensions : 1080x1080   Video: h264 (yuv420p) @ 30 fps
+Dimensions : 1080x1350   Video: h264 (yuv420p) @ 30 fps
 Duration   : 25.000 s    Audio: aac (2 ch @ 44100 Hz)
 ```
 

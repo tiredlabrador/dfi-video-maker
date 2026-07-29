@@ -59,7 +59,7 @@ def test_caption_stays_inside_the_canvas():
 
 
 def test_static_layer_combines_overlay_and_caption():
-    cfg = gv.RenderConfig(overlay_path="assets/overlay.png")
+    cfg = gv.RenderConfig(overlay_path="assets/overlay-portrait.png")
     layer = gv.build_static_layer(cfg, "Blue Monday", "Datassette")
     box = layer.getchannel("A").getbbox()
     # Overlay content (top-left logo) + caption (bottom-left) => spans most of the height.
