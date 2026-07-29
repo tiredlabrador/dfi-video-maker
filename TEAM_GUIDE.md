@@ -17,6 +17,19 @@ touch any code.
 3. **Get your video** — it appears in the output folder in Drive, named
    `Artist - Track.mp4`.
 
+## Check the artwork first (recommended)
+
+Some tracks carry junk or wrong cover art baked into the file — adverts, tracker
+banners, the wrong album. To check before you make anything:
+
+1. In the Config cell set **`PREVIEW_ONLY = True`** and **Run all**.
+2. It shows every track's artwork in one grid — labelled with where the art came
+   from (`embedded` = from the audio file, `override` = from the sheet,
+   `fallback` = the DFI label) and its size. **No videos are made.**
+3. Spot a bad one? Put an image link in the **Drive artwork file\*** column to
+   replace it.
+4. Set `PREVIEW_ONLY = False` and Run all for real.
+
 ## Good to know
 
 - **Do several at once** — set Render? = TRUE on as many rows as you like, then
