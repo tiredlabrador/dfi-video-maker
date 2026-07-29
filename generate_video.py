@@ -42,7 +42,7 @@ CANVAS_W            = 1080         # output width
 CANVAS_H            = 1350         # output height (1350 = 4:5; set 1080 for square)
 CIRCLE_DIAMETER     = 830          # diameter of the spinning record, in pixels
 HOLE_DIAMETER       = 24           # centre spindle hole (0 = no hole)
-DISC_OFFSET_Y       = -48          # nudge the record up (-) / down (+) from centre
+DISC_OFFSET_Y       = 0            # nudge the record up (-) / down (+) from centre
 BG_COLOUR           = "black"      # canvas background (any Pillow colour name/hex)
 FALLBACK_PATH       = None         # static PNG used when a track has no artwork
 FALLBACK_TEXT       = False        # or True to generate a title/artist card instead
@@ -69,7 +69,7 @@ class RenderConfig:
     canvas_h: int = 1350          # 1080x1350 = 4:5, the Instagram grid format
     circle_diameter: int = 830
     hole_diameter: int = 24       # centre spindle hole, so it reads as a real record
-    disc_offset_y: int = -48      # nudge the record up (-) or down (+) from centre
+    disc_offset_y: int = 0        # nudge the record up (-) or down (+) from centre
     bg_colour: str = "black"
     overlay_path: str = None      # optional static branding overlay (PNG w/ alpha)
     # Burnt-in caption: the track title + artist, drawn bottom-left. Static — it

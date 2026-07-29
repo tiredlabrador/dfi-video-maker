@@ -2,8 +2,8 @@
 Layout tests — the disc must land exactly where the design says.
 
 Reference design (Figma, 4:5 Instagram post): canvas 1080x1350, disc 830x830
-positioned at X=125, Y=212. These numbers are the contract; if the maths or the
-defaults drift, these tests fail.
+centred on the canvas (X=125, Y=260). These numbers are the contract; if the maths
+or the defaults drift, these tests fail.
 """
 import os
 import tempfile
@@ -14,7 +14,7 @@ import generate_video as gv
 
 DESIGN_CANVAS = (1080, 1350)
 DESIGN_DISC = 830
-DESIGN_POS = (125, 212)          # top-left corner of the disc on the canvas
+DESIGN_POS = (125, 260)          # top-left of the disc: centred on the canvas
 TOLERANCE = 2                    # anti-aliased edge wobble
 
 
@@ -55,7 +55,7 @@ def test_disc_clears_the_caption_area():
 
 def test_square_format_still_works():
     """Changing canvas + disc + overlay should still produce a centred square."""
-    cfg = gv.RenderConfig(canvas_h=1080, circle_diameter=710, disc_offset_y=-40,
+    cfg = gv.RenderConfig(canvas_h=1080, circle_diameter=710, disc_offset_y=0,
                           caption=False, motion_blur_samples=1)
     left, top, right, bottom = _rendered_disc_bbox(cfg)
     assert abs(left - (1080 - 710) // 2) <= TOLERANCE

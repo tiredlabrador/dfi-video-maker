@@ -29,3 +29,6 @@ assets/overlay copy.png
 
 # Licensed fonts — never commit (public repo = redistribution)
 assets/fonts/
+
+# Local safety backups
+backups/
