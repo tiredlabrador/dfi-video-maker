@@ -112,3 +112,31 @@ def test_ingest_report_groups_by_decision():
 def test_ingest_report_handles_nothing_to_do():
     text = gv.format_ingest([], ROWS)
     assert "nothing" in text.lower() or "no files" in text.lower()
+
+
+def test_row_fully_contained_in_a_longer_name_still_matches():
+    """Real case: sheet says "The Binary Star System", file says
+    "The Binary Star System aka Amir Alexander & Cecilia Bruun Hansen"."""
+    rows = [{"row": 2, "track": "Kom! (Come)",
+             "artist": "The Binary Star System", "has_audio": False}]
+    name = ("The Binary Star System aka Amir Alexander & Cecilia Bruun Hansen"
+            " - Kom! (Come).mp3")
+    got = _by_filename(gv.match_files_to_rows([_file(name)], rows), name)
+    assert got["decision"] == "auto", f"scored {got['score']:.2f}"
+    assert got["row"] == 2
+
+
+def test_containment_does_not_fire_on_a_too_generic_row():
+    """A 2-word row could appear inside anything — don't auto-link on that."""
+    rows = [{"row": 2, "track": "Go", "artist": "The", "has_audio": False}]
+    name = "The Prodigy - Everybody In The Place Go Wild Extended.mp3"
+    got = _by_filename(gv.match_files_to_rows([_file(name)], rows), name)
+    assert got["decision"] != "auto", f"wrongly auto-linked at {got['score']:.2f}"
+
+
+def test_partial_containment_is_not_treated_as_a_full_match():
+    rows = [{"row": 2, "track": "Cosmic Confession",
+             "artist": "Adam Pits", "has_audio": False}]
+    name = "01 - Adam Pits - Secret Entrance.mp3"      # same artist, wrong track
+    got = _by_filename(gv.match_files_to_rows([_file(name)], rows), name)
+    assert got["decision"] != "auto", f"wrongly auto-linked at {got['score']:.2f}"

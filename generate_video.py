@@ -482,9 +482,19 @@ def score_file_against_row(file_info: dict, row: dict) -> float:
     """
     target = f"{row.get('artist', '')} {row.get('track', '')}"
     from_tags = f"{file_info.get('artist') or ''} {file_info.get('title') or ''}".strip()
-    scores = [_similarity(file_info.get("filename", ""), target)]
-    if from_tags:
-        scores.append(_similarity(from_tags, target))
+    sources = [file_info.get("filename", "")] + ([from_tags] if from_tags else [])
+    scores = [_similarity(source, target) for source in sources]
+
+    # Files often carry extra credits the sheet doesn't — "aka ...", "feat. ...",
+    # remixer names. If every word of the row appears in the file, that's a strong
+    # match even though the extra words drag the plain similarity down. Needs at
+    # least 3 words, so a generic row can't be "contained" in just anything.
+    row_words = set(normalise_for_match(target).split())
+    if len(row_words) >= 3:
+        for source in sources:
+            if row_words <= set(normalise_for_match(source).split()):
+                scores.append(0.88)
+                break
     return max(scores)
 
 
@@ -537,6 +547,76 @@ def match_files_to_rows(files, rows, auto_threshold: float = 0.82,
                            for s, r in ranked[:3]],
         }
     return results
+
+
+def read_audio_tags(audio_path: str):
+    """Read title/artist from an audio file's tags. Missing tags are not an error."""
+    result = {"title": None, "artist": None}
+    ext = os.path.splitext(audio_path)[1].lower()
+    try:
+        if ext == ".mp3":
+            from mutagen.id3 import ID3
+            tags = ID3(audio_path)
+            title, artist = tags.get("TIT2"), tags.get("TPE1")
+            result["title"] = str(title) if title else None
+            result["artist"] = str(artist) if artist else None
+        else:
+            import mutagen
+            tags = mutagen.File(audio_path)
+            if tags:
+                for key, field in (("title", "title"), ("artist", "artist")):
+                    value = tags.get(key) or tags.get(field.upper())
+                    if value:
+                        result[field] = str(value[0] if isinstance(value, list) else value)
+    except Exception:
+        pass                      # no tags, or unreadable — the caller copes
+    return result
+
+
+def refine_with_tags(results, rows, read_tags, auto_threshold: float = 0.82,
+                     review_threshold: float = 0.55):
+    """
+    Second pass for files that didn't match confidently on filename alone.
+
+    `read_tags(file_info)` is called ONLY for those files — so the caller only has
+    to download the few that need it — and should return {"title", "artist"} or
+    None. Rows already claimed by a confident filename match are never taken.
+    """
+    refined = [dict(r) for r in results]
+    taken = {r["row"] for r in refined if r["decision"] == "auto" and r["row"]}
+    open_rows = [r for r in rows if not r.get("has_audio")]
+
+    for result in refined:
+        if result["decision"] == "auto":
+            continue
+
+        tags = read_tags(result["file"])
+        if not tags or not (tags.get("title") or tags.get("artist")):
+            continue
+
+        enriched = dict(result["file"],
+                        title=tags.get("title"), artist=tags.get("artist"))
+        ranked = sorted(((score_file_against_row(enriched, row), row)
+                         for row in open_rows if row["row"] not in taken),
+                        key=lambda pair: pair[0], reverse=True)
+        if not ranked:
+            continue
+
+        best_score, best_row = ranked[0]
+        if best_score <= result["score"]:
+            continue                            # tags didn't help
+
+        result["score"] = round(best_score, 3)
+        result["candidates"] = [{"row": r["row"], "track": r["track"],
+                                 "artist": r["artist"], "score": round(s, 3)}
+                                for s, r in ranked[:3]]
+        result["matched_on"] = "tags"
+        if best_score >= auto_threshold:
+            result["decision"], result["row"] = "auto", best_row["row"]
+            taken.add(best_row["row"])
+        elif best_score >= review_threshold:
+            result["decision"], result["row"] = "review", best_row["row"]
+    return refined
 
 
 def format_ingest(results, rows) -> str:
