@@ -20,6 +20,7 @@ normalisation, Spotify fallback.
 import io
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -328,6 +329,112 @@ def make_fallback_card(track: str, artist: str, size: int,
         draw.text((x, y), text, font=font, fill=cfg.fallback_fg)
 
     return card
+
+
+# ---------------------------------------------------------------------------
+# Matching dropped audio files to sheet rows
+# ---------------------------------------------------------------------------
+_BRACKETED = re.compile(r"[\(\[\{][^\)\]\}]*[\)\]\}]")
+_LEADING_NUM = re.compile(r"^\s*\d{1,3}\s*[-._)\s]")
+_SIDE_MARKER = re.compile(r"\b[ab][1-9]\d?\b")          # vinyl sides: A1, B2
+_KEY_OR_BPM = re.compile(r"\b(\d{1,2}[ab]|\d{2,3}(\.\d+)?)\b")   # 6A, 126.0, 133
+_NOISE_WORDS = {"copy", "mix", "original", "edit", "master", "mp3", "flac", "wav"}
+
+
+def normalise_for_match(text) -> str:
+    """
+    Reduce a filename or tag to comparable words: drop extensions, bracketed
+    extras, track numbers, vinyl side markers, key/BPM, and filler words.
+    """
+    s = str(text or "").lower()
+    s = re.sub(r"\.(mp3|flac|wav|aiff?|m4a)$", " ", s)
+    s = _BRACKETED.sub(" ", s)
+    s = s.replace("_", " ").replace("-", " ").replace("&", " ")
+    s = _LEADING_NUM.sub(" ", s)
+    s = _SIDE_MARKER.sub(" ", s)
+    s = _KEY_OR_BPM.sub(" ", s)
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    words = [w for w in s.split() if w and w not in _NOISE_WORDS]
+    return " ".join(words)
+
+
+def _token_key(text) -> str:
+    """Order-insensitive, duplicate-insensitive form, so 'artist track' matches
+    'track artist' and repeated artist names don't skew the score."""
+    return " ".join(sorted(set(normalise_for_match(text).split())))
+
+
+def _similarity(a: str, b: str) -> float:
+    from difflib import SequenceMatcher
+    a, b = _token_key(a), _token_key(b)
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def score_file_against_row(file_info: dict, row: dict) -> float:
+    """
+    Best score from either the file's tags or its filename against the row's
+    artist+track. Using both matters: bootlegs often have junk or missing tags,
+    while clean rips often have messy filenames.
+    """
+    target = f"{row.get('artist', '')} {row.get('track', '')}"
+    from_tags = f"{file_info.get('artist') or ''} {file_info.get('title') or ''}".strip()
+    scores = [_similarity(file_info.get("filename", ""), target)]
+    if from_tags:
+        scores.append(_similarity(from_tags, target))
+    return max(scores)
+
+
+def match_files_to_rows(files, rows, auto_threshold: float = 0.82,
+                        review_threshold: float = 0.55):
+    """
+    Match dropped audio files to sheet rows awaiting audio.
+
+    Returns one result per file: {file, row, score, decision, candidates} where
+    decision is "auto" (confident — safe to link), "review" (plausible, needs a
+    human) or "none". Rows that already have audio are never matched, and no row
+    is claimed by two files.
+    """
+    open_rows = [r for r in rows if not r.get("has_audio")]
+
+    scored = []
+    for f in files:
+        ranked = sorted(
+            ((score_file_against_row(f, r), r) for r in open_rows),
+            key=lambda pair: pair[0], reverse=True,
+        )
+        scored.append((f, ranked))
+
+    # Strongest matches get first claim on a row.
+    order = sorted(range(len(scored)),
+                   key=lambda i: scored[i][1][0][0] if scored[i][1] else 0.0,
+                   reverse=True)
+
+    taken, results = set(), [None] * len(scored)
+    for i in order:
+        f, ranked = scored[i]
+        best_row, best_score = None, 0.0
+        for score, row in ranked:
+            if row["row"] in taken:
+                continue
+            best_row, best_score = row, score
+            break
+        if best_row is not None and best_score >= auto_threshold:
+            decision, chosen = "auto", best_row["row"]
+            taken.add(chosen)
+        elif best_row is not None and best_score >= review_threshold:
+            decision, chosen = "review", best_row["row"]
+        else:
+            decision, chosen = "none", None
+        results[i] = {
+            "file": f, "row": chosen, "score": round(best_score, 3),
+            "decision": decision,
+            "candidates": [{"row": r["row"], "track": r["track"],
+                            "artist": r["artist"], "score": round(s, 3)}
+                           for s, r in ranked[:3]],
+        }
+    return results
 
 
 def resolve_artwork(audio_path: str, artwork_path, cfg: "RenderConfig" = None,
