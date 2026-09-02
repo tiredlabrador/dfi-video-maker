@@ -87,6 +87,8 @@ class RenderConfig:
     fallback_bg: str = "white"    # background of the generated text card
     fallback_fg: str = "black"    # text colour of the generated text card
     font_path: str = None         # brand font (.ttf/.otf); None = pick a default
+    encode_preset: str = "veryfast"   # x264 speed/size trade-off (faster = bigger file)
+    encode_crf: int = 21              # lower = better quality, bigger file
     motion_blur_samples: int = 1  # 1 = off; >1 enables 180-degree-style motion blur
     shutter_fraction: float = 0.5 # 0.5 = a 180-degree shutter (blur spans half a frame)
 
@@ -683,6 +685,33 @@ def _rotate_motion_blurred(record: Image.Image, angle: float, width_deg: float,
     return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), "RGBA")
 
 
+def iter_frames(record: Image.Image, num_frames: int, cfg: RenderConfig,
+                overlay: Image.Image = None):
+    """
+    Yield one full rotation as RGB images, without touching the disk.
+
+    This is the single source of truth for what a frame looks like; render_frames
+    writes these out as PNGs, while render_video streams them straight into
+    ffmpeg (much faster — no PNG compression and no disk round-trip).
+    """
+    step = 360.0 / num_frames
+    n_samples = cfg.motion_blur_samples or 1
+    if n_samples > 1:
+        spin_source = _rotate_motion_blurred(
+            record, 0.0, step * cfg.shutter_fraction, n_samples)
+    else:
+        spin_source = record
+
+    ox = (cfg.canvas_w - record.width) // 2
+    oy = (cfg.canvas_h - record.height) // 2 + cfg.disc_offset_y
+    for i in range(num_frames):
+        canvas = Image.new("RGBA", (cfg.canvas_w, cfg.canvas_h), cfg.bg_colour)
+        canvas.alpha_composite(_rotate_sharp(spin_source, i * step), (ox, oy))
+        if overlay is not None:
+            canvas.alpha_composite(overlay)
+        yield canvas.convert("RGB")
+
+
 def render_frames(record: Image.Image, frames_dir: str, num_frames: int,
                   cfg: RenderConfig, overlay: Image.Image = None) -> None:
     """
@@ -693,28 +722,8 @@ def render_frames(record: Image.Image, frames_dir: str, num_frames: int,
     RGBA image the size of the canvas), it is composited on top of every frame —
     static branding that doesn't spin with the record.
     """
-    step = 360.0 / num_frames
-    n_samples = cfg.motion_blur_samples or 1
-
-    # Motion blur commutes with rotation about the same centre: blurring the record
-    # then spinning it gives the same frame as blurring every spun frame. So we blur
-    # the record ONCE here, then just do a single cheap rotation per frame — same
-    # look as per-frame blur, but ~n_samples times faster.
-    if n_samples > 1:
-        blur_width = step * cfg.shutter_fraction     # degrees the shutter is open
-        spin_source = _rotate_motion_blurred(record, 0.0, blur_width, n_samples)
-    else:
-        spin_source = record
-
-    for i in range(num_frames):
-        rotated = _rotate_sharp(spin_source, i * step)
-        canvas = Image.new("RGBA", (cfg.canvas_w, cfg.canvas_h), cfg.bg_colour)
-        ox = (cfg.canvas_w - record.width) // 2
-        oy = (cfg.canvas_h - record.height) // 2 + cfg.disc_offset_y
-        canvas.alpha_composite(rotated, (ox, oy))
-        if overlay is not None:
-            canvas.alpha_composite(overlay)      # static branding, on top
-        canvas.convert("RGB").save(os.path.join(frames_dir, f"{i:05d}.png"))
+    for i, frame in enumerate(iter_frames(record, num_frames, cfg, overlay)):
+        frame.save(os.path.join(frames_dir, f"{i:05d}.png"))
 
 
 def load_overlay(cfg: RenderConfig):
@@ -775,6 +784,44 @@ def build_output(spin_path: str, audio_path: str, start: float, out_path: str,
 # ---------------------------------------------------------------------------
 # The reusable entry point
 # ---------------------------------------------------------------------------
+def stream_render(record, overlay, audio_path, start, output_path,
+                  num_frames: int, cfg: RenderConfig) -> None:
+    """
+    Encode the whole clip in ONE ffmpeg pass, streaming frames in over a pipe.
+
+    The spin is only `num_frames` long, so frames are cycled to fill the clip.
+    This avoids writing ~150MB of PNGs to disk and re-encoding the video a second
+    time — roughly twice as fast as the frames-on-disk route, same output.
+    """
+    total = int(round(cfg.clip_length_seconds * cfg.fps))
+    command = [
+        "ffmpeg", "-y", "-v", "error",
+        "-f", "rawvideo", "-pix_fmt", "rgb24",
+        "-s", f"{cfg.canvas_w}x{cfg.canvas_h}", "-r", str(cfg.fps), "-i", "pipe:0",
+        "-ss", f"{start:.3f}", "-i", audio_path,
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-t", str(cfg.clip_length_seconds),
+        "-c:v", "libx264", "-preset", cfg.encode_preset, "-crf", str(cfg.encode_crf),
+        "-pix_fmt", "yuv420p", "-r", str(cfg.fps),
+        "-c:a", "aac", "-ac", "2", "-ar", "44100", "-b:a", "192k",
+        "-movflags", "+faststart", output_path,
+    ]
+    process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        cycle = [frame.tobytes()
+                 for frame in iter_frames(record, num_frames, cfg, overlay)]
+        for i in range(total):
+            process.stdin.write(cycle[i % num_frames])
+        process.stdin.close()
+    except BrokenPipeError:
+        pass                                   # ffmpeg died; the error is below
+    _, stderr = process.communicate()
+    if process.returncode != 0:
+        raise RenderError(
+            f"Render failed:\n{stderr.decode(errors='replace').strip()}")
+
+
 def render_video(audio_path: str, artwork_path, clip_start, output_path: str,
                  cfg: RenderConfig, track: str = None, artist: str = None) -> str:
     """
@@ -801,12 +848,7 @@ def render_video(audio_path: str, artwork_path, clip_start, output_path: str,
     overlay = build_static_layer(cfg, track, artist)   # branding + burnt-in caption
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="dfi_frames_") as frames_dir:
-        render_frames(record, frames_dir, num_frames, cfg, overlay=overlay)
-        spin_path = os.path.join(frames_dir, "spin.mp4")
-        encode_spin(frames_dir, num_frames, spin_path, cfg)
-        build_output(spin_path, audio_path, start, output_path, cfg)
-
+    stream_render(record, overlay, audio_path, start, output_path, num_frames, cfg)
     return output_path
 
 
