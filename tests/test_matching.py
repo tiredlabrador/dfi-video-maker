@@ -95,3 +95,20 @@ def test_borderline_match_is_flagged_for_review_not_auto_linked():
     got = _by_filename(gv.match_files_to_rows([_file(name)], ROWS), name)
     assert got["decision"] in ("review", "none")
     assert got["decision"] != "auto"
+
+
+def test_ingest_report_groups_by_decision():
+    files = [
+        _file("02 Datassette - Blue Monday (V4).mp3"),
+        _file("Veritas.mp3"),
+        _file("some_random_rip_2019.mp3"),
+    ]
+    text = gv.format_ingest(gv.match_files_to_rows(files, ROWS), ROWS)
+    assert "WILL LINK" in text
+    assert "NEEDS A HUMAN" in text or "NO MATCH" in text
+    assert "Blue Monday" in text
+
+
+def test_ingest_report_handles_nothing_to_do():
+    text = gv.format_ingest([], ROWS)
+    assert "nothing" in text.lower() or "no files" in text.lower()

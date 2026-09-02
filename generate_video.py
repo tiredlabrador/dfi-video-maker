@@ -539,6 +539,47 @@ def match_files_to_rows(files, rows, auto_threshold: float = 0.82,
     return results
 
 
+def format_ingest(results, rows) -> str:
+    """Readable summary of what the drop-folder ingest is proposing to do."""
+    if not results:
+        return ("=" * 68 + "\n  DROP FOLDER\n" + "=" * 68 +
+                "\n  No new audio files to bring in — nothing to do.\n" + "=" * 68)
+
+    by_row = {r["row"]: r for r in rows}
+    auto = [r for r in results if r["decision"] == "auto"]
+    review = [r for r in results if r["decision"] == "review"]
+    none = [r for r in results if r["decision"] == "none"]
+
+    lines = ["=" * 68, "  DROP FOLDER", "=" * 68]
+
+    lines.append(f"  WILL LINK ({len(auto)}):")
+    if not auto:
+        lines.append("      (none)")
+    for r in auto:
+        row = by_row.get(r["row"], {})
+        lines.append(f"      {r['file']['filename'][:44]}")
+        lines.append(f"          -> row {r['row']}: "
+                     f"{row.get('artist', '')} - {row.get('track', '')}  "
+                     f"({r['score']:.2f})")
+
+    if review:
+        lines += ["", f"  NEEDS A HUMAN ({len(review)}) — not confident, left alone:"]
+        for r in review:
+            lines.append(f"      {r['file']['filename'][:44]}")
+            for candidate in r["candidates"][:2]:
+                lines.append(f"          maybe row {candidate['row']}: "
+                             f"{candidate['artist']} - {candidate['track']}  "
+                             f"({candidate['score']:.2f})")
+
+    if none:
+        lines += ["", f"  NO MATCH ({len(none)}) — no row is waiting for these:"]
+        for r in none:
+            lines.append(f"      {r['file']['filename'][:44]}")
+
+    lines.append("=" * 68)
+    return "\n".join(lines)
+
+
 def resolve_artwork(audio_path: str, artwork_path, cfg: "RenderConfig" = None,
                     track: str = None, artist: str = None):
     """
