@@ -332,6 +332,106 @@ def make_fallback_card(track: str, artist: str, size: int,
 
 
 # ---------------------------------------------------------------------------
+# Pre-flight checks — catch bad rows before any downloading or rendering
+# ---------------------------------------------------------------------------
+def extract_drive_id(link):
+    """Pull a Drive file id out of the common share-link shapes (or a bare id)."""
+    link = str(link or "").strip()
+    for pattern in (r"/d/([A-Za-z0-9_-]{20,})", r"[?&]id=([A-Za-z0-9_-]{20,})"):
+        found = re.search(pattern, link)
+        if found:
+            return found.group(1)
+    if re.fullmatch(r"[A-Za-z0-9_-]{20,}", link):
+        return link
+    return None
+
+
+def preflight(entries):
+    """
+    Check rows before the batch runs.
+
+    `entries` are dicts of {row, track, artist, audio_link, clip_start}. Returns
+    {ok, errors, warnings, rows: {row: {problems: [{level, message}], ...}}}.
+    An "error" would break the run, so it blocks; a "warning" is something worth
+    knowing (a blank clip start still works — it just starts at 0:00).
+    """
+    report = {"rows": {}, "errors": 0, "warnings": 0}
+
+    names = {}
+    for entry in entries:
+        name = sanitise_filename(
+            f"{str(entry.get('artist') or '').strip()} - "
+            f"{str(entry.get('track') or '').strip()}"
+        )
+        names.setdefault(name, []).append(entry.get("row"))
+
+    for entry in entries:
+        row = entry.get("row")
+        problems = []
+        track = str(entry.get("track") or "").strip()
+        artist = str(entry.get("artist") or "").strip()
+        audio = str(entry.get("audio_link") or "").strip()
+        clip = str(entry.get("clip_start") or "").strip()
+
+        if not audio:
+            problems.append({"level": "warning",
+                             "message": "No audio link — this row will be skipped."})
+        elif not (extract_drive_id(audio) or audio.lower().startswith("http")):
+            problems.append({"level": "error",
+                             "message": f"Audio link isn't a Drive link or URL: {audio[:40]!r}"})
+
+        if not clip:
+            problems.append({"level": "warning",
+                             "message": "No clip start — the clip will begin at 0:00."})
+        else:
+            try:
+                parse_timecode(clip)
+            except RenderError:
+                problems.append({"level": "error",
+                                 "message": f"Clip start {clip!r} isn't a time like '1:13'."})
+
+        if not track and not artist:
+            problems.append({"level": "warning",
+                             "message": "No track or artist — the file will be named 'untitled' "
+                                        "and the caption will be blank."})
+
+        name = sanitise_filename(f"{artist} - {track}")
+        clash = [r for r in names.get(name, []) if r != row]
+        if clash:
+            problems.append({"level": "warning",
+                             "message": f"Duplicate output name — also row(s) {clash}."})
+
+        report["rows"][row] = {"track": track, "artist": artist, "problems": problems}
+        report["errors"] += sum(1 for p in problems if p["level"] == "error")
+        report["warnings"] += sum(1 for p in problems if p["level"] == "warning")
+
+    report["ok"] = report["errors"] == 0
+    return report
+
+
+def format_preflight(report) -> str:
+    """Human-readable pre-flight summary for the notebook output."""
+    lines = ["=" * 64, "  PRE-FLIGHT CHECK", "=" * 64]
+    for row, info in sorted(report["rows"].items()):
+        if not info["problems"]:
+            continue
+        label = f"{info['artist']} - {info['track']}".strip(" -") or "(blank row)"
+        lines.append(f"  row {row}: {label}")
+        for problem in info["problems"]:
+            mark = "ERROR  " if problem["level"] == "error" else "warning"
+            lines.append(f"      [{mark}] {problem['message']}")
+    if report["errors"]:
+        lines += ["", f"  {report['errors']} error(s) must be fixed before rendering.",
+                  "  Nothing has been downloaded or rendered."]
+    elif report["warnings"]:
+        lines += ["", f"  {report['warnings']} warning(s) — safe to continue."]
+    else:
+        lines.append("  All rows look good.")
+    lines.append("=" * 64)
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Matching dropped audio files to sheet rows
 # ---------------------------------------------------------------------------
 _BRACKETED = re.compile(r"[\(\[\{][^\)\]\}]*[\)\]\}]")
