@@ -47,11 +47,23 @@ function setError(message) {
 async function checkHealth() {
   try {
     const health = await (await fetch('/api/health')).json();
-    if (health.ffmpeg && health.ffprobe) {
-      $('health').textContent = 'Ready';
-    } else {
-      $('health').textContent = 'ffmpeg is missing — see the README';
+    if (!health.ffmpeg || !health.ffprobe) {
+      $('health').textContent = 'ffmpeg is missing — see INSTALL.md';
       $('health').classList.add('bad');
+      return;
+    }
+    // Missing brand assets do not stop a render, but they change what comes
+    // out, and that is far cheaper to notice now than after posting.
+    const missing = [];
+    if (!health.brand_font) missing.push('the Squid Boy font');
+    if (!health.overlay) missing.push('the logo overlay');
+    if (!health.fallback_art) missing.push('the fallback artwork');
+    if (missing.length) {
+      $('health').textContent = `Missing ${missing.join(', ')}`;
+      $('health').classList.add('bad');
+      $('health').title = 'Videos will still render, but they will not look right.';
+    } else {
+      $('health').textContent = 'Ready';
     }
   } catch {
     $('health').textContent = 'Not connected';

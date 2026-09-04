@@ -98,10 +98,17 @@ class _Handler(BaseHTTPRequestHandler):
         if path.startswith("/static/"):
             return self._serve_static(path[len("/static/"):])
         if path == "/api/health":
+            cfg = self.server.make_config()
             return self._json(200, {
                 "ok": True,
                 "ffmpeg": shutil.which("ffmpeg") is not None,
                 "ffprobe": shutil.which("ffprobe") is not None,
+                # The brand font is licensed, so it is not in the public repo.
+                # Without it captions render in a substitute, which is easy to
+                # miss until a video is already posted. Say so up front.
+                "brand_font": cfg.font_path is not None,
+                "overlay": cfg.overlay_path is not None,
+                "fallback_art": cfg.fallback_path is not None,
             })
         if path == "/api/jobs":
             return self._json(200, [self._job_payload(j)
