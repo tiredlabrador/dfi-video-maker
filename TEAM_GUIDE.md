@@ -1,40 +1,62 @@
 # DFI Video Maker — Team Guide
 
-> Working draft — we'll update this as the tool is finished.
+Turns tracks into spinning-record videos for Instagram. You don't touch any code.
 
-## What it is
+## Making a batch — the short version
 
-A tool that turns a track into a short square video for Instagram: the cover art
-spinning like a record, with a snippet of the track playing underneath. You don't
-touch any code.
+1. **Fill in the sheet** — Track, Artist, Spotify link, Clip start (`mm:ss`), and
+   tick **Render?**. Use one tab per batch.
+2. **Drop the audio files** into the shared Drive drop folder. No renaming, no
+   uploading anywhere else, no copying links.
+3. **Open the tool** and click **▶ Run all**:
+   https://colab.research.google.com/drive/1ULpQZgM-NUs_Zxrpg0k-w4rFWZACVgto
+4. **Answer two questions** as it goes (below).
+5. **Collect the videos** from the output folder in Drive — in a subfolder named
+   after your tab, numbered `01`, `02`, … in sheet order, ready to post.
 
-## Make a video — 3 steps
+A Spotify playlist for the batch is created automatically at the end.
 
-1. **Fill in the sheet** (and make sure **Render?** is set to **TRUE** for that row).
-2. **Run it** — open the tool in Google Colab
-   (https://colab.research.google.com/drive/1ULpQZgM-NUs_Zxrpg0k-w4rFWZACVgto)
-   and click **▶ Run all**. Wait a minute or two.
-3. **Get your video** — it appears in the output folder in Drive, named
-   `Artist - Track.mp4`.
+## The two questions it asks
 
-## Check the artwork first (recommended)
+**"Link these files into the sheet?"** — it has matched the audio you dropped to
+your rows and wants to fill in the links. Check the list looks right, then `y`.
+It only ever fills **blank** cells; it will never overwrite a link you already
+put in.
 
-Some tracks carry junk or wrong cover art baked into the file — adverts, tracker
-banners, the wrong album. To check before you make anything:
+**"Render these videos?"** — it shows you every track's artwork in one grid
+first. This is your chance to catch bad cover art — some files, especially
+bootlegs, have adverts or the wrong album baked in. Answer `n` if something's
+wrong, fix it, and run again.
 
-1. In the Config cell set **`PREVIEW_ONLY = True`** and **Run all**.
-2. It shows every track's artwork in one grid — labelled with where the art came
-   from (`embedded` = from the audio file, `override` = from the sheet,
-   `fallback` = the DFI label) and its size. **No videos are made.**
-3. Spot a bad one? Put an image link in the **Drive artwork file\*** column to
-   replace it.
-4. Set `PREVIEW_ONLY = False` and Run all for real.
+Each question is in its own cell, so the answer box appears right below it. Type
+`y` and press Enter.
 
-## Good to know
+## Before it renders, it checks your rows
 
-- **Do several at once** — set Render? = TRUE on as many rows as you like, then
-  Run all.
-- **Stuck on "Connecting…"?** Reload the page (Cmd/Ctrl + R) and click Run all
-  again. Nothing is lost.
-- **Something didn't work?** Copy the message the tool printed at the bottom and
-  send it to Claude or ChatGPT — it'll tell you what went wrong.
+If something would break the run it stops and tells you **before** anything is
+downloaded — a clip start it can't read, or a broken audio link. Warnings (like a
+blank clip start, which just means the clip begins at 0:00) don't stop it.
+
+## Fixing bad artwork
+
+Put an image link in the **Drive artwork file\*** column for that row. That
+overrides whatever is in the audio file. Tracks with no artwork at all fall back
+to the DFI record label design.
+
+## If something goes wrong
+
+- **A row failed** — usually a dead Drive link, or the file isn't shared. The
+  summary at the bottom says which row and why. Other rows are unaffected.
+- **A file wasn't matched** — its filename probably doesn't say who the artist
+  is. It'll be listed rather than guessed at; just paste that one link in by hand.
+- **Stuck on "Connecting…"** — reload the page (Cmd/Ctrl + R) and Run all again.
+  Nothing is lost.
+- **It looks frozen** — it's probably waiting for a `y`. Check the bottom of the
+  cell that's running.
+- **Anything else** — copy the message it printed and send it to Claude or
+  ChatGPT.
+
+## Only want to check the artwork?
+
+Set **`PREVIEW_ONLY = True`** in the Config cell and Run all. It shows every
+cover and makes no videos. Set it back to `False` when you're ready.
