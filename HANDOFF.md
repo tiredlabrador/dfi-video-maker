@@ -40,7 +40,7 @@ burnt in bottom-left, over a 25-second clip of the audio.
 |---|---|
 | `generate_video.py` | The engine. Pure, importable, ~1000 lines. All the logic worth reusing. |
 | `DFI_batch_render.ipynb` | The Colab launcher. Downloads the engine from GitHub raw at run time. |
-| `tests/` | 82 tests, all passing. `pytest` at the repo root. |
+| `tests/` | Full suite, all passing. `pytest` at the repo root. |
 | `assets/` | `overlay-portrait.png` (1080×1350), `overlay-square.png` (1080×1080), `fallback.png` (830×830). Fonts are **git-ignored**. |
 | `TEAM_GUIDE.md` | Plain-English guide for the 3-person team. |
 | `BACKLOG.md` | Parked ideas. |
@@ -69,6 +69,8 @@ Canvas **1080×1350** (4:5). Background **black**.
   brand font (**Squid Boy**). Title wraps to max 2 lines and shrinks to fit.
   Title size = 4.5% of canvas height, artist = 2.8%. Also static.
 - **Output**: H.264 / yuv420p, AAC stereo 44.1kHz, exactly 25.000s, 30fps.
+- **Rotation filter**: bilinear per frame (speed); bicubic for the one-off
+  pre-blur pass, where it costs nothing.
 
 Full defaults are in `RenderConfig` in `generate_video.py`.
 
@@ -114,7 +116,7 @@ identical headers would break the read entirely.
 
 **Writing PNG frames to disk was 76% of render time.** 149MB written per video
 purely so ffmpeg could read it back, then the video was encoded *twice*. Fix:
-build frames in memory, stream raw into one ffmpeg pass. 17.5s → 8.4s.
+build frames in memory, stream raw into one ffmpeg pass.
 
 **Naive motion blur was 4× slower than necessary.** Blurring every frame is
 redundant: rotational blur *commutes* with rotation, so blur the disc **once** and
@@ -123,9 +125,10 @@ cost. Don't regress this.
 
 **Measure, don't assume.** An "obvious" optimisation (RGB compositing instead of
 RGBA) measured at **1.03×** and was discarded. Another (bilinear instead of
-bicubic rotation) measured **2.2× faster** with a mean pixel difference under
-1/255 — but is *parked* pending a visual check on the disc edge, where the max
-difference was large.
+bicubic rotation) looked risky because the *maximum* pixel difference was 255 —
+but that turned out to be entirely in **fully transparent** pixels that are never
+drawn. Only ~25 visible pixels of an 830px disc actually differ, so it shipped:
+render went 8.4s → **5.7s**. Check *where* a difference is before trusting it.
 
 **Colab's `input()` box can be unreachable.** Long cell output goes in a
 fixed-height scroll pane and the input widget after a big image simply isn't
