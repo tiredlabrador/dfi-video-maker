@@ -208,3 +208,79 @@ h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
 /* An element with the `hidden` attribute must stay hidden even when a rule
    below gives it a display value. */
 [hidden] { display: none !important; }
+
+/* ── Tabs ────────────────────────────────────────────────────────── */
+.tabs {
+  display: flex; gap: .25rem; padding: 0 1.5rem;
+  max-width: 1180px; margin: 1rem auto -.25rem;
+}
+.tab {
+  font: inherit; font-size: .85rem; font-weight: 600;
+  padding: .5rem .95rem; cursor: pointer;
+  color: var(--muted); background: transparent;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: 8px 8px 0 0;
+}
+.tab:hover { color: var(--text); }
+.tab.is-active {
+  color: var(--text); background: var(--panel);
+  border-color: var(--line);
+}
+
+/* ── Batch rows ──────────────────────────────────────────────────── */
+.rows { list-style: none; margin: .75rem 0 0; padding: 0; }
+.row {
+  display: grid;
+  grid-template-columns: 1.9rem minmax(0,1fr) 4.6rem auto;
+  gap: .5rem; align-items: center;
+  padding: .55rem; margin-bottom: .4rem;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px;
+}
+.row-number {
+  font-variant-numeric: tabular-nums; font-weight: 700; font-size: .85rem;
+  color: var(--accent); text-align: center;
+}
+.row-fields { display: grid; gap: .3rem; min-width: 0; }
+.row input {
+  width: 100%; padding: .35rem .5rem; font: inherit; font-size: .85rem;
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.row input:focus {
+  outline: none; border-color: var(--accent);
+}
+.row input.row-artist { font-size: .8rem; color: var(--muted); }
+.row-start { text-align: center; font-variant-numeric: tabular-nums; }
+.row-tools { display: flex; flex-direction: column; gap: .15rem; }
+.row-tools button {
+  width: 1.5rem; height: 1.1rem; padding: 0; line-height: 1;
+  font-size: .65rem; cursor: pointer;
+  color: var(--muted); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 4px;
+}
+.row-tools button:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
+.row-tools button:disabled { opacity: .3; cursor: default; }
+.row-remove { color: var(--danger) !important; }
+
+/* ── Batch results ───────────────────────────────────────────────── */
+.results { margin-top: 1.25rem; }
+.results ul { list-style: none; margin: 0; padding: 0; }
+.results li {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .45rem .6rem; font-size: .85rem;
+  border: 1px solid var(--line); border-radius: 8px; margin-bottom: .35rem;
+  background: var(--panel-2);
+}
+.results li.is-done { border-color: rgba(94,217,154,.35); }
+.results li.is-error { border-color: rgba(255,107,94,.35); }
+.result-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+               white-space: nowrap; }
+.result-state { font-size: .75rem; color: var(--muted); flex-shrink: 0; }
+.results li.is-done .result-state { color: var(--ok); }
+.results li.is-error .result-state { color: var(--danger); }
+.result-play {
+  font: inherit; font-size: .75rem; padding: .2rem .5rem; cursor: pointer;
+  color: var(--text); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 5px; flex-shrink: 0;
+}
+.result-play:hover { border-color: var(--accent); }

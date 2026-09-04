@@ -13,6 +13,7 @@ const state = {
   artFile: null,
   audioDuration: 0,
   polling: null,
+  batch: [],          // one entry per track, in posting order
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
@@ -163,6 +164,8 @@ async function render(preview) {
   if (preview) form.append('preview', '1');
 
   setBusy(true);
+  show($('batch-results'), false);
+  show($('facts'), false);
   updateProgress(0, preview ? 'Preparing a quick preview…' : 'Starting the render…');
 
   let job;
@@ -207,8 +210,11 @@ function updateProgress(fraction, message) {
 }
 
 function setBusy(busy) {
-  $('render-btn').disabled = busy;
-  $('preview-btn').disabled = busy;
+  for (const id of ['render-btn', 'preview-btn',
+                    'batch-render-btn', 'batch-preview-btn']) {
+    const button = $(id);
+    if (button) button.disabled = busy;
+  }
 }
 
 function showResult(job, preview) {
@@ -260,7 +266,7 @@ function showResult(job, preview) {
 
 /* ── Wiring ──────────────────────────────────────────────────────── */
 
-function wireDropZone(zone, onFile) {
+function wireDropZone(zone, onFile, onFiles) {
   ['dragenter', 'dragover'].forEach((event) =>
     zone.addEventListener(event, (e) => {
       e.preventDefault();
@@ -270,8 +276,10 @@ function wireDropZone(zone, onFile) {
     zone.addEventListener(event, () => zone.classList.remove('is-over')));
   zone.addEventListener('drop', (e) => {
     e.preventDefault();
-    const file = e.dataTransfer?.files?.[0];
-    if (file) onFile(file);
+    const files = [...(e.dataTransfer?.files || [])];
+    if (!files.length) return;
+    if (onFiles) onFiles(files);
+    else if (onFile) onFile(files[0]);
   });
 }
 
@@ -309,4 +317,255 @@ document.addEventListener('DOMContentLoaded', () => {
   $('clip-start').addEventListener('input', validateClipStart);
   $('preview-btn').addEventListener('click', () => render(true));
   $('render-btn').addEventListener('click', () => render(false));
+});
+
+
+/* ══ A whole batch ═══════════════════════════════════════════════════
+ *
+ * The list order IS the posting order, and the numbers shown are the numbers
+ * the files get. That is why moving a track re-labels everything immediately:
+ * the screen should never disagree with what will come out.
+ */
+
+function switchTab(which) {
+  const single = which === 'single';
+  $('tab-single').classList.toggle('is-active', single);
+  $('tab-batch').classList.toggle('is-active', !single);
+  $('tab-single').setAttribute('aria-selected', String(single));
+  $('tab-batch').setAttribute('aria-selected', String(!single));
+  show($('pane-single'), single);
+  show($('pane-batch'), !single);
+}
+
+async function addBatchFiles(files) {
+  setError('');
+  for (const file of files) {
+    const entry = {
+      file, name: file.name, token: null,
+      track: '', artist: '', clipStart: '0:00', reading: true,
+    };
+    state.batch.push(entry);
+    renderBatchRows();
+
+    // Read tags in the background so the rows fill themselves in.
+    try {
+      const form = new FormData();
+      form.append('audio', file);
+      const info = await postForm('/api/inspect', form);
+      entry.token = info.upload_token;
+      entry.track = info.track || stripExtension(file.name);
+      entry.artist = info.artist || '';
+      entry.duration = info.duration || 0;
+      if (!info.readable) entry.problem = info.error;
+    } catch (error) {
+      entry.problem = error.message;
+    }
+    entry.reading = false;
+    renderBatchRows();
+  }
+}
+
+function stripExtension(name) {
+  return name.replace(/\.[^.]+$/, '');
+}
+
+function renderBatchRows() {
+  const list = $('batch-rows');
+  list.innerHTML = '';
+  show($('batch-empty'), state.batch.length === 0);
+
+  state.batch.forEach((entry, index) => {
+    const row = document.createElement('li');
+    row.className = 'row';
+
+    const number = document.createElement('div');
+    number.className = 'row-number';
+    number.textContent = String(index + 1).padStart(2, '0');
+
+    const fields = document.createElement('div');
+    fields.className = 'row-fields';
+    const track = document.createElement('input');
+    track.type = 'text';
+    track.placeholder = entry.reading ? 'Reading…' : 'Track title';
+    track.value = entry.track;
+    track.addEventListener('input', () => { entry.track = track.value; });
+    const artist = document.createElement('input');
+    artist.type = 'text';
+    artist.className = 'row-artist';
+    artist.placeholder = 'Artist';
+    artist.value = entry.artist;
+    artist.addEventListener('input', () => { entry.artist = artist.value; });
+    fields.append(track, artist);
+
+    const start = document.createElement('input');
+    start.type = 'text';
+    start.className = 'row-start';
+    start.value = entry.clipStart;
+    start.title = 'Clip start (mm:ss)';
+    start.addEventListener('input', () => { entry.clipStart = start.value; });
+
+    const tools = document.createElement('div');
+    tools.className = 'row-tools';
+    tools.append(
+      toolButton('▲', 'Move up', index === 0, () => moveBatch(index, -1)),
+      toolButton('▼', 'Move down', index === state.batch.length - 1,
+                 () => moveBatch(index, 1)),
+      toolButton('✕', 'Remove', false, () => {
+        state.batch.splice(index, 1);
+        renderBatchRows();
+      }, 'row-remove'),
+    );
+
+    row.append(number, fields, start, tools);
+    if (entry.problem) {
+      row.title = entry.problem;
+      row.style.borderColor = 'rgba(255,107,94,.5)';
+    }
+    list.append(row);
+  });
+}
+
+function toolButton(label, title, disabled, onClick, extraClass) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.title = title;
+  button.disabled = disabled;
+  if (extraClass) button.className = extraClass;
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function moveBatch(index, direction) {
+  const target = index + direction;
+  if (target < 0 || target >= state.batch.length) return;
+  [state.batch[index], state.batch[target]] =
+    [state.batch[target], state.batch[index]];
+  renderBatchRows();
+}
+
+async function renderBatchNow(preview) {
+  const ready = state.batch.filter((entry) => entry.token);
+  if (!ready.length) {
+    setError('Add some audio files first.');
+    return;
+  }
+  if (ready.length !== state.batch.length) {
+    setError('Some files are still being read. Give it a second.');
+    return;
+  }
+
+  setError('');
+  setBusy(true);
+  show($('facts'), false);
+  updateProgress(0, 'Starting the batch…');
+
+  let job;
+  try {
+    const response = await fetch('/api/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        preview,
+        items: state.batch.map((entry) => ({
+          upload_token: entry.token,
+          track: entry.track.trim(),
+          artist: entry.artist.trim(),
+          clip_start: entry.clipStart.trim() || '0:00',
+        })),
+      }),
+    });
+    job = await response.json();
+    if (!response.ok) throw new Error(job.error || 'The batch could not start.');
+  } catch (error) {
+    setError(error.message);
+    setBusy(false);
+    return;
+  }
+  pollBatch(job.id);
+}
+
+function pollBatch(jobId) {
+  clearInterval(state.polling);
+  state.polling = setInterval(async () => {
+    let job;
+    try {
+      job = await (await fetch(`/api/jobs/${jobId}`)).json();
+    } catch { return; }
+
+    updateProgress(job.progress, job.message);
+    showBatchResults(job);
+
+    if (job.status === 'done' || job.status === 'error') {
+      clearInterval(state.polling);
+      setBusy(false);
+      if (job.status === 'error') setError(job.error || 'The batch failed.');
+      if (job.zip_url) {
+        const zip = $('zip-download');
+        zip.href = job.zip_url;
+        show(zip, true);
+      }
+    }
+  }, 500);
+}
+
+function showBatchResults(job) {
+  const items = job.items || [];
+  if (!items.length) return;
+  show($('batch-results'), true);
+
+  const list = $('batch-result-list');
+  list.innerHTML = '';
+  for (const item of items) {
+    const row = document.createElement('li');
+    row.className = item.status === 'done' ? 'is-done'
+                  : item.status === 'error' ? 'is-error' : '';
+
+    const name = document.createElement('span');
+    name.className = 'result-name';
+    name.textContent = item.filename;
+
+    const stateLabel = document.createElement('span');
+    stateLabel.className = 'result-state';
+    stateLabel.textContent = item.status === 'done' ? 'Ready'
+                           : item.status === 'error' ? 'Failed' : 'Waiting';
+    if (item.error) {
+      stateLabel.title = item.error;
+      row.title = item.error;
+    }
+
+    row.append(name, stateLabel);
+
+    if (item.download_url) {
+      const play = document.createElement('button');
+      play.type = 'button';
+      play.className = 'result-play';
+      play.textContent = 'Watch';
+      play.addEventListener('click', () => {
+        show($('stage-empty'), false);
+        show($('stage-art'), false);
+        const player = $('player');
+        player.src = item.download_url;
+        show(player, true);
+        player.load();
+        player.play().catch(() => {});
+      });
+      row.append(play);
+    }
+    list.append(row);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('tab-single').addEventListener('click', () => switchTab('single'));
+  $('tab-batch').addEventListener('click', () => switchTab('batch'));
+
+  $('batch-input').addEventListener('change', (e) => {
+    addBatchFiles([...e.target.files]);
+    e.target.value = '';
+  });
+  wireDropZone($('batch-drop'), null, (files) => addBatchFiles(files));
+
+  $('batch-render-btn').addEventListener('click', () => renderBatchNow(false));
+  $('batch-preview-btn').addEventListener('click', () => renderBatchNow(true));
 });

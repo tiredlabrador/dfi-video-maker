@@ -14,10 +14,17 @@
   <div class="health" id="health" aria-live="polite"></div>
 </header>
 
+<nav class="tabs" role="tablist">
+  <button role="tab" id="tab-single" class="tab is-active" aria-selected="true"
+          aria-controls="pane-single">One track</button>
+  <button role="tab" id="tab-batch" class="tab" aria-selected="false"
+          aria-controls="pane-batch">A whole batch</button>
+</nav>
+
 <main>
-  <!-- ── Left: the inputs ─────────────────────────────────────────── -->
-  <section class="panel" aria-labelledby="setup-heading">
-    <h2 id="setup-heading">1 &nbsp;Choose a track</h2>
+  <!-- ══ ONE TRACK ══════════════════════════════════════════════════ -->
+  <section class="panel" id="pane-single" role="tabpanel" aria-labelledby="tab-single">
+    <h2>1 &nbsp;Choose a track</h2>
 
     <label class="drop" id="audio-drop" for="audio-input">
       <input type="file" id="audio-input" accept="audio/*,.mp3,.wav,.flac,.m4a,.aiff" hidden>
@@ -32,17 +39,14 @@
     </div>
 
     <h2>2 &nbsp;Check the details</h2>
-
     <div class="field">
       <label for="track">Track</label>
       <input type="text" id="track" placeholder="Track title" autocomplete="off">
     </div>
-
     <div class="field">
       <label for="artist">Artist</label>
       <input type="text" id="artist" placeholder="Artist name" autocomplete="off">
     </div>
-
     <div class="field">
       <label for="clip-start">Clip start</label>
       <input type="text" id="clip-start" value="0:00" placeholder="mm:ss"
@@ -67,23 +71,40 @@
     <p class="hint">A quick preview is small and short — same framing, same spin, ready in a couple of seconds.</p>
   </section>
 
-  <!-- ── Right: what came out ─────────────────────────────────────── -->
+  <!-- ══ BATCH ═════════════════════════════════════════════════════ -->
+  <section class="panel" id="pane-batch" role="tabpanel" aria-labelledby="tab-batch" hidden>
+    <h2>1 &nbsp;Add the tracks</h2>
+    <label class="drop" id="batch-drop" for="batch-input">
+      <input type="file" id="batch-input" accept="audio/*,.mp3,.wav,.flac,.m4a,.aiff" multiple hidden>
+      <span class="drop-icon" aria-hidden="true">♫</span>
+      <span class="drop-text">Drop the whole folder of audio files here</span>
+      <span class="drop-hint">They render in the order shown, and are numbered to match</span>
+    </label>
+
+    <ol class="rows" id="batch-rows"></ol>
+    <p class="hint" id="batch-empty">Nothing added yet.</p>
+
+    <h2>2 &nbsp;Make the videos</h2>
+    <div class="actions">
+      <button type="button" id="batch-preview-btn" class="btn btn--ghost">Quick preview of all</button>
+      <button type="button" id="batch-render-btn" class="btn">Render the batch</button>
+    </div>
+    <p class="hint">The numbers are the posting order. Use the arrows to move a track.</p>
+  </section>
+
+  <!-- ══ RESULT ════════════════════════════════════════════════════ -->
   <section class="panel panel--result" aria-labelledby="result-heading">
     <h2 id="result-heading">Result</h2>
 
     <div class="stage" id="stage">
       <div class="stage-empty" id="stage-empty">
-        <div class="phone">
-          <div class="disc" aria-hidden="true"><span class="spindle"></span></div>
-        </div>
+        <div class="phone"><div class="disc" aria-hidden="true"><span class="spindle"></span></div></div>
         <p>Your video will appear here.</p>
       </div>
-
       <div class="stage-art" id="stage-art" hidden>
         <img id="artwork-preview" alt="The artwork this video will use">
         <p class="caption-note" id="artwork-note"></p>
       </div>
-
       <video id="player" controls playsinline hidden></video>
     </div>
 
@@ -98,6 +119,12 @@
       <h3>What was produced</h3>
       <dl id="facts-list"></dl>
       <a class="btn btn--small" id="download" download>Download the MP4</a>
+    </div>
+
+    <div class="results" id="batch-results" hidden>
+      <h3>Tracks</h3>
+      <ul id="batch-result-list"></ul>
+      <a class="btn btn--small" id="zip-download" download hidden>Download all as a zip</a>
     </div>
   </section>
 </main>
