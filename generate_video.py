@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -1003,6 +1004,51 @@ def build_output(spin_path: str, audio_path: str, start: float, out_path: str,
 # ---------------------------------------------------------------------------
 # The reusable entry point
 # ---------------------------------------------------------------------------
+def pipe_frames_to(command: list, chunks) -> None:
+    """
+    Run `command`, feed it `chunks` on stdin, and raise RenderError if it fails.
+
+    The care here is about deadlock. We write hundreds of megabytes of raw
+    frames into ffmpeg's input while ffmpeg writes to its error pipe. A pipe
+    holds only about 64KB, so if nobody empties the error pipe, a talkative
+    ffmpeg stops reading its input and the two processes wait for each other
+    for ever — a render that never finishes, with nothing to cancel it.
+
+    So stderr is drained on its own thread for the whole run, and stdout is
+    discarded outright since nothing ever reads it.
+    """
+    process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.PIPE)
+    collected = []
+
+    def drain():
+        try:
+            collected.append(process.stderr.read())
+        except Exception:                          # noqa: BLE001
+            collected.append(b"")
+
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+
+    try:
+        for chunk in chunks:
+            process.stdin.write(chunk)
+    except (BrokenPipeError, OSError):
+        pass                     # the tool died; its own message says why
+    finally:
+        try:
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+
+    process.wait()
+    reader.join(timeout=10)
+    if process.returncode != 0:
+        message = (collected[0] if collected else b"").decode(errors="replace").strip()
+        raise RenderError(f"Render failed:\n{message}")
+
+
 def stream_render(record, overlay, audio_path, start, output_path,
                   num_frames: int, cfg: RenderConfig, progress=None) -> None:
     """
@@ -1025,27 +1071,21 @@ def stream_render(record, overlay, audio_path, start, output_path,
         "-c:a", "aac", "-ac", "2", "-ar", "44100", "-b:a", "192k",
         "-movflags", "+faststart", output_path,
     ]
-    process = subprocess.Popen(command, stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        # Only `num_frames` frames are unique (one rotation); the rest of the
-        # clip reuses them. Building the cycle is the slow half, so it gets the
-        # bulk of the progress bar and writing to ffmpeg gets the tail.
-        cycle = [frame.tobytes()
-                 for frame in iter_frames(
-                     record, num_frames, cfg, overlay,
-                     progress=(lambda f: progress(0.7 * f)) if progress else None)]
+    # Only `num_frames` frames are unique (one rotation); the rest of the clip
+    # reuses them. Building the cycle is the slow half, so it gets the bulk of
+    # the progress bar and writing to ffmpeg gets the tail.
+    cycle = [frame.tobytes()
+             for frame in iter_frames(
+                 record, num_frames, cfg, overlay,
+                 progress=(lambda f: progress(0.7 * f)) if progress else None)]
+
+    def frames():
         for i in range(total):
-            process.stdin.write(cycle[i % num_frames])
             if progress is not None and i % 25 == 0:
                 progress(0.7 + 0.25 * (i / total))
-        process.stdin.close()
-    except BrokenPipeError:
-        pass                                   # ffmpeg died; the error is below
-    _, stderr = process.communicate()
-    if process.returncode != 0:
-        raise RenderError(
-            f"Render failed:\n{stderr.decode(errors='replace').strip()}")
+            yield cycle[i % num_frames]
+
+    pipe_frames_to(command, frames())
 
 
 def render_video(audio_path: str, artwork_path, clip_start, output_path: str,

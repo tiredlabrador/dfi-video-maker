@@ -70,6 +70,9 @@ def main(argv=None) -> int:
     finally:
         server.shutdown()
         server.server_close()
+        # Delete the working copies. Anything worth keeping has already been
+        # downloaded; without this the temp folder grows every single run.
+        server.render_service.cleanup()
     return 0
 
 

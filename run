@@ -25,7 +25,22 @@ fi
 
 # ── 2. Check the things we can't install ourselves ────────────────────
 command -v python3 >/dev/null 2>&1 || fail \
-  "Python 3 isn't installed. Install it from https://www.python.org/downloads/ and run this again."
+  "Python 3 isn't installed. In a Terminal, run:  brew install python"
+
+# macOS ships its own Python 3.9, which is too old for the libraries this needs.
+# Without this check the install fails forty lines later with a wall of version
+# numbers that means nothing to anyone.
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)'; then
+  have=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+  say ""
+  say "${RED}Your Python is too old.${OFF} This needs 3.12 or newer; you have $have."
+  say "That's usually the copy macOS ships with. Install a current one:"
+  say ""
+  say "    ${BOLD}brew install python${OFF}"
+  say ""
+  say "Then close this window, open a new one, and try again."
+  exit 1
+fi
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
   say ""
@@ -39,6 +54,13 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
 fi
 
 # ── 3. Set up a private Python environment, once ──────────────────────
+# A venv points at the exact Python that made it. After `brew upgrade python`
+# that interpreter is gone and the venv is a dead shell, so check it still runs
+# rather than failing cryptically on the next command.
+if [ -d venv ] && ! venv/bin/python --version >/dev/null 2>&1; then
+  say "${DIM}The setup was left broken by a Python update. Rebuilding it.${OFF}"
+  rm -rf venv
+fi
 if [ ! -d venv ]; then
   say "${DIM}First run — setting up. This takes a minute.${OFF}"
   python3 -m venv venv

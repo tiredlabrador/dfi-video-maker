@@ -98,10 +98,33 @@ def test_an_unknown_path_is_a_404(server):
 
 
 def test_static_files_cannot_be_used_to_read_the_rest_of_the_disk(server):
-    """`/static/../../secrets` must not escape the static folder."""
-    with pytest.raises(urllib.error.HTTPError) as caught:
-        get(server, "/static/..%2f..%2fgenerate_video.py")
-    assert caught.value.code in (403, 404)
+    """
+    `/static/../../generate_video.py` must not escape the static folder.
+
+    Sent down a raw socket so no HTTP client tidies the path up on the way —
+    tidying is what made an earlier version of this test pass for the wrong
+    reason, by turning the attack into a request for a file that simply did
+    not exist.
+    """
+    import socket as _socket
+
+    for attempt in ("/static/../../generate_video.py",
+                    "/static/..%2f..%2fgenerate_video.py",
+                    "/static/%2e%2e%2f%2e%2e%2fgenerate_video.py"):
+        sock = _socket.create_connection(
+            ("127.0.0.1", server.server_address[1]), timeout=10)
+        sock.sendall(f"GET {attempt} HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                     f"Connection: close\r\n\r\n".encode())
+        reply = b""
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            reply += chunk
+        sock.close()
+        assert reply.startswith(b"HTTP/1.1 40"), f"{attempt} -> {reply[:40]!r}"
+        # Whatever the status, the file's contents must never appear.
+        assert b"RenderConfig" not in reply, f"{attempt} leaked the source file"
 
 
 # -- health ---------------------------------------------------------------
@@ -221,19 +244,22 @@ def test_asking_for_an_unknown_job_is_a_404(server):
     assert caught.value.code == 404
 
 
-def test_the_file_of_an_unfinished_job_is_not_offered(server, audio_and_art):
-    audio, art = audio_and_art
-    job = json.load(post_form(
-        server, "/api/render",
-        fields={"track": "T", "artist": "A", "clip_start": "0:00", "preview": "1"},
-        files={"audio": ("tone.mp3", audio), "artwork": ("art.png", art)},
-    ))
-    # Immediately, before it can possibly have finished.
+def test_the_file_of_an_unfinished_job_is_not_offered(server):
+    """
+    Deterministic: a job that is definitely still running. The earlier version
+    of this test accepted either 200 or 409 and so could never fail.
+    """
+    import threading as _threading
+
+    gate = _threading.Event()
+    job = server.jobs.submit("render", lambda progress: gate.wait(5))
     try:
-        response = get(server, f"/api/jobs/{job['id']}/file")
-        assert response.status == 200      # it finished faster than we asked
-    except urllib.error.HTTPError as error:
-        assert error.code == 409
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            get(server, f"/api/jobs/{job.id}/file")
+        assert caught.value.code == 409
+    finally:
+        gate.set()
+        job.wait(5)
 
 
 # -- keeping other websites out -------------------------------------------

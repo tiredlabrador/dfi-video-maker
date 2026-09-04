@@ -88,11 +88,30 @@ def test_a_job_can_report_progress_and_a_message_while_it_runs():
 
 
 def test_progress_is_clamped_to_the_zero_to_one_range():
-    store = JobStore()
-    store.submit("render", lambda progress: progress(5.0, "over")).wait(5)
-    job = store.submit("render", lambda progress: (progress(-2.0, "under"), "x")[1])
-    assert wait_for(lambda: job.status == "done")
-    assert 0.0 <= job.progress <= 1.0
+    """
+    Tested on the Job directly. Doing it through a running job is misleading:
+    once the work returns, the store sets progress to 1.0 itself, so the
+    assertion would pass even with no clamping at all.
+    """
+    from app.jobs import Job
+
+    job = Job("render")
+    job._set_progress(5.0, "over")
+    assert job.progress == 1.0, "a fraction above 1 was not clamped"
+    job._set_progress(-2.0, "under")
+    assert job.progress == 0.0, "a negative fraction was not clamped"
+    job._set_progress(0.5, "middle")
+    assert job.progress == 0.5
+
+
+def test_a_progress_call_with_no_message_keeps_the_last_one():
+    """Progress ticks often; the message only changes at real stage changes."""
+    from app.jobs import Job
+
+    job = Job("render")
+    job._set_progress(0.1, "Encoding")
+    job._set_progress(0.2)
+    assert job.message == "Encoding"
 
 
 def test_jobs_can_be_looked_up_by_id():

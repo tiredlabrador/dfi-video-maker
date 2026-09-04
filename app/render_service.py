@@ -9,12 +9,13 @@ working directory, and reporting progress in words a person can read.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
-import uuid
 from dataclasses import dataclass, field
 
 import generate_video as gv
@@ -46,6 +47,9 @@ class RenderService:
     """Turns upload bytes plus settings into finished MP4s on disk."""
 
     def __init__(self, work_dir: str | None = None):
+        # Only clean up a directory we made ourselves; a caller-supplied one
+        # (the tests, or a future "keep my renders here") is not ours to delete.
+        self._owns_work_dir = work_dir is None
         self.work_dir = work_dir or tempfile.mkdtemp(prefix="dfi-video-")
         self.uploads_dir = os.path.join(self.work_dir, "uploads")
         self.output_dir = os.path.join(self.work_dir, "output")
@@ -57,19 +61,38 @@ class RenderService:
         """
         Write an uploaded file into the working directory and return its path.
 
+        Two things are going on here.
+
         The filename comes from the browser, so it is untrusted even though the
         browser is on the same machine: `../../../etc/passwd` is a perfectly
-        legal thing to put in a form. Only the extension is kept from it — the
-        name itself is replaced with a random one, which also means two uploads
-        called `cover.png` cannot clobber each other.
+        legal thing to put in a form. Only the extension is kept — the name
+        itself is discarded.
+
+        The stored name is a fingerprint of the *contents*, so sending the same
+        file twice stores it once. That matters more than it sounds: the page
+        re-reads a track's tags every time its artwork is added, changed or
+        cleared, and each of those used to leave another full copy on disk
+        forever.
         """
         _, extension = os.path.splitext(os.path.basename(filename or ""))
         extension = re.sub(r"[^A-Za-z0-9.]", "", extension)[:12]
-        safe = uuid.uuid4().hex + extension
-        path = os.path.join(self.uploads_dir, safe)
-        with open(path, "wb") as handle:
-            handle.write(content)
+        digest = hashlib.sha256(content).hexdigest()[:32]
+        path = os.path.join(self.uploads_dir, digest + extension)
+        if not os.path.exists(path) or os.path.getsize(path) != len(content):
+            with open(path, "wb") as handle:
+                handle.write(content)
         return path
+
+    def cleanup(self) -> None:
+        """
+        Delete everything this run produced.
+
+        Called when the app is stopped. Without it the uploads and the finished
+        MP4s sit in a temporary folder that macOS only reclaims after days of
+        not being touched — a few batches a week adds up to gigabytes.
+        """
+        if self._owns_work_dir and os.path.isdir(self.work_dir):
+            shutil.rmtree(self.work_dir, ignore_errors=True)
 
     # -- rendering --------------------------------------------------------
     def render(self, request: RenderRequest, progress=None) -> str:

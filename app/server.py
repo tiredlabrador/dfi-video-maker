@@ -31,8 +31,11 @@ from app.render_service import RenderRequest, RenderService
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Refuse anything larger than this, so a mistake cannot eat all the memory.
-MAX_UPLOAD_BYTES = 400 * 1024 * 1024      # 400 MB
+# Refuse anything larger than this. The whole body is held in memory while it
+# is parsed, and parsing copies it, so the real peak is a few times this number
+# — which is why the cap is well above a normal track but nowhere near a
+# gigabyte. Real files are 5-50MB.
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024      # 100 MB
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -43,6 +46,51 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):      # quieter than the default
         if self.server.verbose:
             super().log_message(fmt, *args)
+
+    def _send_file(self, path: str, content_type: str, filename: str,
+                   disposition: str = "inline") -> None:
+        """
+        Send a file, honouring a Range request.
+
+        Video needs this. Safari refuses to play media from a server that does
+        not support ranges, and no browser can seek without it — the preview
+        player would just sit there blank.
+        """
+        size = os.path.getsize(path)
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
+        }
+        start, end = 0, size - 1
+        status = 200
+
+        raw_range = self.headers.get("Range", "")
+        if raw_range.startswith("bytes="):
+            spec = raw_range[len("bytes="):].split(",")[0].strip()
+            first, _, last = spec.partition("-")
+            try:
+                if first:
+                    start = int(first)
+                    end = int(last) if last else size - 1
+                elif last:                       # "bytes=-500" = the last 500
+                    start = max(0, size - int(last))
+                else:
+                    raise ValueError
+            except ValueError:
+                start, end = 0, size - 1
+            else:
+                if start >= size or start > end:
+                    return self._send(
+                        416, b"", "text/plain",
+                        {"Content-Range": f"bytes */{size}"})
+                end = min(end, size - 1)
+                status = 206
+                headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+
+        with open(path, "rb") as handle:
+            handle.seek(start)
+            body = handle.read(end - start + 1)
+        self._send(status, body, content_type, headers)
 
     def _send(self, status: int, body: bytes, content_type: str,
               extra_headers: dict | None = None) -> None:
@@ -64,7 +112,41 @@ class _Handler(BaseHTTPRequestHandler):
                    "application/json; charset=utf-8")
 
     def _error(self, status: int, message: str) -> None:
+        # Read and throw away any body the client is still sending. The browser
+        # reuses one connection for many requests, so an unread body would be
+        # parsed as the *next* request and fail with something baffling. This
+        # is what turns "That file is too big" into a generic network error.
+        self._drain_body()
         self._json(status, {"error": message})
+
+    def _content_length(self) -> int:
+        """The declared body size, or -1 if the header is missing or nonsense."""
+        raw = self.headers.get("Content-Length")
+        if raw is None:
+            return 0
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return -1
+        return value if value >= 0 else -1
+
+    def _drain_body(self) -> None:
+        """Swallow an unread request body so the connection stays usable."""
+        if getattr(self, "_body_read", False):
+            return
+        self._body_read = True
+        remaining = self._content_length()
+        if remaining <= 0:
+            return
+        if remaining > MAX_UPLOAD_BYTES:
+            # Too much to swallow politely; hang up instead of reading it all.
+            self.close_connection = True
+            return
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 64 * 1024))
+            if not chunk:
+                break
+            remaining -= len(chunk)
 
     # -- keeping other websites out ---------------------------------------
     def _is_local_request(self) -> bool:
@@ -145,16 +227,21 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _read_form(self):
         """Read and parse a multipart body, or send the error and return None."""
-        length = int(self.headers.get("Content-Length") or 0)
-        if length <= 0:
+        length = self._content_length()
+        if length < 0:
+            self._error(400, "The request had a malformed length.")
+            return None
+        if length == 0:
             self._error(400, "The request had no body.")
             return None
         if length > MAX_UPLOAD_BYTES:
-            self._error(413, "That file is too big.")
+            self._error(413, f"That file is too big. The limit is "
+                             f"{MAX_UPLOAD_BYTES // (1024 * 1024)}MB.")
             return None
+        body = self.rfile.read(length)
+        self._body_read = True
         try:
-            return parse_multipart(self.rfile.read(length),
-                                   self.headers.get("Content-Type", ""))
+            return parse_multipart(body, self.headers.get("Content-Type", ""))
         except ParseError as exc:
             self._error(400, str(exc))
             return None
@@ -197,7 +284,7 @@ class _Handler(BaseHTTPRequestHandler):
     # -- jobs -------------------------------------------------------------
     def _job_payload(self, job) -> dict:
         payload = job.as_dict()
-        payload["probe"] = getattr(job, "probe", None)
+        payload["probe"] = getattr(job, "probe", None) or None
         if job.kind == "batch":
             payload["items"] = self._batch_items_payload(job)
             payload["zip_url"] = (f"/api/jobs/{job.id}/zip"
@@ -216,11 +303,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._error(409, "That video is not finished yet.")
         if not os.path.isfile(job.result):
             return self._error(404, "The finished file is no longer on disk.")
-        with open(job.result, "rb") as handle:
-            body = handle.read()
-        name = os.path.basename(job.result)
-        self._send(200, body, "video/mp4",
-                   {"Content-Disposition": f'inline; filename="{name}"'})
+        self._send_file(job.result, "video/mp4", os.path.basename(job.result))
 
     def _upload(self) -> None:
         """Store one file and hand back a token for it."""
@@ -252,12 +335,14 @@ class _Handler(BaseHTTPRequestHandler):
         return candidate if os.path.isfile(candidate) else None
 
     def _read_json(self):
-        length = int(self.headers.get("Content-Length") or 0)
+        length = self._content_length()
         if length <= 0 or length > 4 * 1024 * 1024:
             self._error(400, "The request body was missing or too large.")
             return None
+        body = self.rfile.read(length)
+        self._body_read = True
         try:
-            return json.loads(self.rfile.read(length).decode("utf-8"))
+            return json.loads(body.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             self._error(400, "The request body was not valid JSON.")
             return None
@@ -340,11 +425,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._error(404, "No such track in that batch.")
         if result.status != "done" or not result.output_path:
             return self._error(409, "That track has not finished.")
-        with open(result.output_path, "rb") as handle:
-            body = handle.read()
-        self._send(200, body, "video/mp4",
-                   {"Content-Disposition":
-                    f'inline; filename="{os.path.basename(result.output_path)}"'})
+        self._send_file(result.output_path, "video/mp4",
+                        os.path.basename(result.output_path))
 
     def _serve_batch_zip(self, job_id: str) -> None:
         job = self.server.jobs.get(job_id)
@@ -386,14 +468,21 @@ class _Handler(BaseHTTPRequestHandler):
             track=track, artist=artist, cfg=cfg,
         )
 
+        # `probe` is a plain box the work fills in. It cannot refer to the Job
+        # itself: submit() starts the thread BEFORE it returns, so a render
+        # that finished quickly would reach for a variable that did not exist
+        # yet. That was hidden only by renders taking a few seconds.
+        probe_box: dict = {}
+
         def work(progress):
             path = service.render(request, progress=progress)
             # Probe every render: the difference between "it did not crash"
             # and "the file really is what we promised".
-            job.probe = service.probe(path)
+            probe_box.update(service.probe(path))
             return path
 
         job = self.server.jobs.submit("render", work, label=f"{artist} — {track}")
+        job.probe = probe_box
         self._json(202, self._job_payload(job))
 
 
@@ -409,6 +498,20 @@ class DFIServer(ThreadingHTTPServer):
         self.render_service = RenderService(work_dir=work_dir)
         self.verbose = verbose
         self.config_overrides = config_overrides or {}
+
+    def handle_error(self, request, client_address):
+        """
+        A browser closing a connection mid-request is normal, not an error.
+
+        Left alone, every abandoned request prints a traceback, which buries
+        the ones that actually matter.
+        """
+        import sys
+        kind = sys.exc_info()[0]
+        if kind is not None and issubclass(kind, (ConnectionError, BrokenPipeError,
+                                                  TimeoutError)):
+            return
+        super().handle_error(request, client_address)
 
     def make_config(self, preview: bool = False) -> gv.RenderConfig:
         """
