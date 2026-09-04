@@ -73,3 +73,26 @@ def test_collect_flags_a_link_that_is_not_a_track():
     found = gv.collect_spotify_tracks(rows)
     assert not found["tracks"]
     assert found["missing"][0]["row"] == 2
+
+
+def test_only_new_tracks_get_added():
+    """Re-running a batch must not pile up duplicates in the playlist."""
+    plan = gv.plan_playlist_additions(["a", "b", "c"], existing_ids=["b"])
+    assert plan == ["a", "c"]
+
+
+def test_playlist_additions_keep_sheet_order():
+    plan = gv.plan_playlist_additions(["c", "a", "b"], existing_ids=[])
+    assert plan == ["c", "a", "b"]
+
+
+def test_nothing_to_add_when_playlist_is_current():
+    assert gv.plan_playlist_additions(["a", "b"], existing_ids=["a", "b"]) == []
+
+
+def test_additions_are_chunked_for_the_api_limit():
+    """Spotify accepts at most 100 tracks per request."""
+    ids = [f"id{i:03d}" for i in range(250)]
+    batches = list(gv.chunked(ids, 100))
+    assert [len(b) for b in batches] == [100, 100, 50]
+    assert [i for b in batches for i in b] == ids

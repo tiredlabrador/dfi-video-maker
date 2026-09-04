@@ -600,6 +600,24 @@ def collect_spotify_tracks(rows):
     return {"tracks": tracks, "missing": missing, "duplicates": duplicates}
 
 
+def plan_playlist_additions(track_ids, existing_ids):
+    """Which tracks still need adding, in sheet order. Re-running adds nothing new."""
+    already = set(existing_ids or [])
+    plan = []
+    for track_id in track_ids:
+        if track_id not in already:
+            plan.append(track_id)
+            already.add(track_id)
+    return plan
+
+
+def chunked(items, size: int):
+    """Yield `items` in batches — Spotify takes at most 100 tracks per request."""
+    items = list(items)
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
+
+
 def read_audio_tags(audio_path: str):
     """Read title/artist from an audio file's tags. Missing tags are not an error."""
     result = {"title": None, "artist": None}
