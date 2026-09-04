@@ -2,7 +2,25 @@
 
 Turns tracks into spinning-record videos for Instagram. You don't touch any code.
 
-## Making a batch — the short version
+There are two ways to run it.
+
+## The app on your Mac (quicker, nicer)
+
+Set it up once — see **`INSTALL.md`**, or https://tiredlabrador.github.io/dfi-video-maker/
+
+Then: double-click **run**, drag your audio files in, check the details it filled
+in for you, press **Render the batch**, download the zip. It numbers everything in
+posting order.
+
+It works from files on your computer, so it doesn't read the sheet or put anything
+in Drive — you do that bit yourself.
+
+## The Colab notebook (does the whole round trip)
+
+Still works exactly as it always has. Use this when you want the sheet read, the
+audio pulled from Drive, the videos uploaded, and the Spotify playlist built.
+
+### Making a batch — the short version
 
 1. **Fill in the sheet** — Track, Artist, Spotify link, Clip start (`mm:ss`), and
    tick **Render?**. Use one tab per batch.

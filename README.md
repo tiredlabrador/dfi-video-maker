@@ -8,18 +8,27 @@ hole, motion blur — with the DFI logo top-left, the track title and artist bur
 in bottom-left, over a 25-second clip of the audio. **1080×1350 (4:5)**, H.264,
 AAC stereo.
 
-Two pieces:
+Three pieces:
 
 - **`generate_video.py`** — the render engine. Pure and importable; `render_video()`
-  is the entry point and every setting lives on a `RenderConfig`.
-- **`DFI_batch_render.ipynb`** — a Google Colab notebook that drives it: reads the
+  is the entry point and every setting lives on a `RenderConfig`. **Both front
+  doors below use this same file**, so they cannot drift apart in what they produce.
+- **`app/`** — a local web app. Runs on your own Mac, opens in your browser, and
+  gives you a real interface: drop in tracks, check the artwork, render one or a
+  whole batch, download. Start it with `./run`. See **`INSTALL.md`**.
+- **`DFI_batch_render.ipynb`** — the original Google Colab notebook: reads the
   sheet, pulls files from Drive, renders, uploads, builds a Spotify playlist.
 
 The notebook **downloads the engine from this repo at run time**, so improvements
-ship by pushing here — no re-uploading the notebook.
+ship by pushing here — no re-uploading the notebook. The local app updates itself
+the same way, pulling from GitHub every time it starts.
 
-> A browser-based replacement for the notebook is being explored in parallel.
-> See `HANDOFF.md` and `BROWSER_FINDINGS.md`; nothing below is affected by it.
+### Which one to use
+
+The local app is quicker and much easier to use, but it works from files on your
+own machine — it does not read the Google Sheet or upload to Drive yet. The
+notebook still does the whole sheet-to-Drive round trip. Both are supported; the
+notebook is the fallback and is no longer being developed.
 
 ---
 

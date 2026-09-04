@@ -1,3 +1,13 @@
+> **Outcome (4 September 2026).** The browser rewrite this document was written
+> to explore was **investigated and rejected**. What shipped instead is a local
+> web app (`app/`) wrapping the existing Python engine unchanged — same quality,
+> same speed, no OAuth verification problem, no browser-support limit, and about
+> a fifth of the work. The Colab notebook still works and is the fallback.
+>
+> The browser research was not wasted: `BROWSER_FINDINGS.md` records what the
+> browser *can* actually do, measured rather than assumed, if this is ever
+> revisited. Section 9 below is the part that is now out of date.
+
 # DFI Video Maker — full context handoff
 
 Everything a fresh session needs to know about this tool: what it does, how it's
