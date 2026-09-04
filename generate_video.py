@@ -549,6 +549,57 @@ def match_files_to_rows(files, rows, auto_threshold: float = 0.82,
     return results
 
 
+# ---------------------------------------------------------------------------
+# Spotify links from the sheet
+# ---------------------------------------------------------------------------
+_SPOTIFY_ID = r"([A-Za-z0-9]{22})"
+_SPOTIFY_PATTERNS = (
+    r"open\.spotify\.com/(?:intl-[a-z-]+/)?track/" + _SPOTIFY_ID,   # web link
+    r"spotify:track:" + _SPOTIFY_ID,                                 # URI
+)
+
+
+def extract_spotify_track_id(link):
+    """
+    Pull a Spotify TRACK id out of a link, URI or bare id. Returns None for
+    anything else — an album or playlist link can't be added to a playlist.
+    """
+    text = str(link or "").strip()
+    if not text:
+        return None
+    for pattern in _SPOTIFY_PATTERNS:
+        found = re.search(pattern, text)
+        if found:
+            return found.group(1)
+    if re.fullmatch(_SPOTIFY_ID, text):
+        return text
+    return None
+
+
+def collect_spotify_tracks(rows):
+    """
+    Turn sheet rows into an ordered, de-duplicated list of Spotify track ids.
+
+    `rows` are dicts of {row, track, artist, spotify}. Returns
+    {tracks, missing, duplicates}: `missing` covers blank links and links that
+    aren't tracks, so nothing disappears silently.
+    """
+    tracks, missing, duplicates, seen = [], [], [], set()
+    for row in rows:
+        track_id = extract_spotify_track_id(row.get("spotify"))
+        label = f"{row.get('artist', '')} - {row.get('track', '')}".strip(" -")
+        if not track_id:
+            missing.append({"row": row.get("row"), "label": label,
+                            "link": str(row.get("spotify") or "").strip()})
+            continue
+        if track_id in seen:
+            duplicates.append(row.get("row"))
+            continue
+        seen.add(track_id)
+        tracks.append({"id": track_id, "row": row.get("row"), "label": label})
+    return {"tracks": tracks, "missing": missing, "duplicates": duplicates}
+
+
 def read_audio_tags(audio_path: str):
     """Read title/artist from an audio file's tags. Missing tags are not an error."""
     result = {"title": None, "artist": None}
