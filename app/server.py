@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
 import generate_video as gv
+from app.batch import BatchItem, render_batch, zip_results
 from app.inspector import inspect_audio
 from app.jobs import JobStore
 from app.multipart import ParseError, parse_multipart
@@ -117,6 +118,11 @@ class _Handler(BaseHTTPRequestHandler):
             rest = path[len("/api/jobs/"):]
             if rest.endswith("/file"):
                 return self._serve_job_file(rest[:-len("/file")])
+            if rest.endswith("/zip"):
+                return self._serve_batch_zip(rest[:-len("/zip")])
+            if "/items/" in rest:
+                job_id, _, index = rest.partition("/items/")
+                return self._serve_batch_item(job_id, index)
             job = self.server.jobs.get(rest)
             if job is None:
                 return self._error(404, "No such job.")
@@ -131,6 +137,10 @@ class _Handler(BaseHTTPRequestHandler):
             return self._start_render()
         if path == "/api/inspect":
             return self._inspect()
+        if path == "/api/upload":
+            return self._upload()
+        if path == "/api/batch":
+            return self._start_batch()
         return self._error(404, "Not found.")
 
     def _read_form(self):
@@ -188,6 +198,11 @@ class _Handler(BaseHTTPRequestHandler):
     def _job_payload(self, job) -> dict:
         payload = job.as_dict()
         payload["probe"] = getattr(job, "probe", None)
+        if job.kind == "batch":
+            payload["items"] = self._batch_items_payload(job)
+            payload["zip_url"] = (f"/api/jobs/{job.id}/zip"
+                                  if job.status == "done" else None)
+            return payload
         if job.status == "done":
             payload["download_url"] = f"/api/jobs/{job.id}/file"
             payload["filename"] = os.path.basename(job.result or "")
@@ -206,6 +221,143 @@ class _Handler(BaseHTTPRequestHandler):
         name = os.path.basename(job.result)
         self._send(200, body, "video/mp4",
                    {"Content-Disposition": f'inline; filename="{name}"'})
+
+    def _upload(self) -> None:
+        """Store one file and hand back a token for it."""
+        form = self._read_form()
+        if form is None:
+            return
+        _, files = form
+        upload = files.get("file") or files.get("artwork") or files.get("audio")
+        if upload is None:
+            return self._error(400, "No file was sent.")
+        path = self.server.render_service.save_upload(upload.filename,
+                                                      upload.content)
+        return self._json(200, {"upload_token": os.path.basename(path)})
+
+    def _resolve_token(self, token: str) -> str | None:
+        """
+        Turn an upload token back into a path, or None if it is not one of ours.
+
+        The token comes from the browser, so it is untrusted: it is treated as a
+        bare filename inside the uploads folder and the resolved path is checked
+        to be genuinely inside it before anything is opened.
+        """
+        if not token or "/" in token or "\\" in token or token.startswith("."):
+            return None
+        uploads = os.path.realpath(self.server.render_service.uploads_dir)
+        candidate = os.path.realpath(os.path.join(uploads, token))
+        if not candidate.startswith(uploads + os.sep):
+            return None
+        return candidate if os.path.isfile(candidate) else None
+
+    def _read_json(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > 4 * 1024 * 1024:
+            self._error(400, "The request body was missing or too large.")
+            return None
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self._error(400, "The request body was not valid JSON.")
+            return None
+
+    def _start_batch(self) -> None:
+        payload = self._read_json()
+        if payload is None:
+            return
+        raw_items = payload.get("items") or []
+        if not raw_items:
+            return self._error(400, "There are no tracks in this batch.")
+
+        # Resolve every token BEFORE starting anything. A batch takes minutes;
+        # finding out at track seven that its file was never uploaded is much
+        # worse than refusing the whole thing up front.
+        items = []
+        for position, entry in enumerate(raw_items, start=1):
+            audio_path = self._resolve_token(entry.get("upload_token", ""))
+            if audio_path is None:
+                return self._error(
+                    400, f"Track {position} refers to a file the app does not "
+                         f"have. Choose it again.")
+            artwork_path = None
+            if entry.get("artwork_token"):
+                artwork_path = self._resolve_token(entry["artwork_token"])
+                if artwork_path is None:
+                    return self._error(
+                        400, f"The replacement artwork for track {position} is "
+                             f"missing. Choose it again.")
+            items.append(BatchItem(
+                audio_path=audio_path, artwork_path=artwork_path,
+                clip_start=(entry.get("clip_start") or "0:00").strip() or "0:00",
+                track=(entry.get("track") or "").strip() or "Untitled",
+                artist=(entry.get("artist") or "").strip() or "Unknown artist",
+            ))
+
+        cfg = self.server.make_config(preview=bool(payload.get("preview")))
+        service = self.server.render_service
+
+        # The job holds the results list from the start and render_batch
+        # appends to it, so the page can show each video as it lands instead
+        # of everything appearing at the end.
+        live_results: list = []
+
+        def work(progress):
+            return render_batch(service, items, cfg,
+                                progress=lambda f, m="": progress(f, m),
+                                results=live_results)
+
+        job = self.server.jobs.submit(
+            "batch", work, label=f"Batch of {len(items)}")
+        job.results = live_results
+        self._json(202, self._job_payload(job))
+
+    def _batch_items_payload(self, job) -> list:
+        payload = []
+        for index, result in enumerate(getattr(job, "results", []) or []):
+            entry = {
+                "position": result.position,
+                "track": result.item.track,
+                "artist": result.item.artist,
+                "status": result.status,
+                "filename": result.filename,
+                "error": result.error,
+                "probe": result.probe or None,
+            }
+            if result.status == "done":
+                entry["download_url"] = f"/api/jobs/{job.id}/items/{index}"
+            payload.append(entry)
+        return payload
+
+    def _serve_batch_item(self, job_id: str, index: str) -> None:
+        job = self.server.jobs.get(job_id)
+        if job is None:
+            return self._error(404, "No such job.")
+        results = getattr(job, "results", []) or []
+        try:
+            result = results[int(index)]
+        except (ValueError, IndexError):
+            return self._error(404, "No such track in that batch.")
+        if result.status != "done" or not result.output_path:
+            return self._error(409, "That track has not finished.")
+        with open(result.output_path, "rb") as handle:
+            body = handle.read()
+        self._send(200, body, "video/mp4",
+                   {"Content-Disposition":
+                    f'inline; filename="{os.path.basename(result.output_path)}"'})
+
+    def _serve_batch_zip(self, job_id: str) -> None:
+        job = self.server.jobs.get(job_id)
+        if job is None:
+            return self._error(404, "No such job.")
+        if job.status not in ("done", "error"):
+            return self._error(409, "That batch is still running.")
+        results = getattr(job, "results", []) or []
+        blob = zip_results(results)
+        if not blob or len(results) == 0:
+            return self._error(409, "There is nothing finished to download.")
+        self._send(200, blob, "application/zip",
+                   {"Content-Disposition": 'attachment; filename="dfi-videos.zip"'})
 
     def _start_render(self) -> None:
         form = self._read_form()
