@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#
+# Start the DFI Video Maker.
+#
+# Double-click this file, or run ./run in a Terminal. It updates itself from
+# GitHub first, so whatever Dom has pushed is what you get — there is never a
+# version to download by hand.
+#
+set -euo pipefail
+cd "$(dirname "$0")"
+
+BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; OFF=$'\033[0m'
+say()  { printf '%s\n' "$*"; }
+fail() { printf '%s%s%s\n' "$RED" "$*" "$OFF" >&2; exit 1; }
+
+say "${BOLD}DFI Video Maker${OFF}"
+
+# ── 1. Get the latest version ─────────────────────────────────────────
+if [ -d .git ] && command -v git >/dev/null 2>&1; then
+  say "${DIM}Checking for updates…${OFF}"
+  if ! git pull --ff-only --quiet 2>/dev/null; then
+    say "${DIM}Couldn't fetch updates (offline, or local changes). Carrying on.${OFF}"
+  fi
+fi
+
+# ── 2. Check the things we can't install ourselves ────────────────────
+command -v python3 >/dev/null 2>&1 || fail \
+  "Python 3 isn't installed. Install it from https://www.python.org/downloads/ and run this again."
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  say ""
+  say "${RED}ffmpeg isn't installed.${OFF} It's the tool that actually makes the video."
+  say "In a Terminal window, paste this and press return:"
+  say ""
+  say "    ${BOLD}brew install ffmpeg${OFF}"
+  say ""
+  say "If that says 'brew: command not found', install Homebrew first from https://brew.sh"
+  exit 1
+fi
+
+# ── 3. Set up a private Python environment, once ──────────────────────
+if [ ! -d venv ]; then
+  say "${DIM}First run — setting up. This takes a minute.${OFF}"
+  python3 -m venv venv
+fi
+# shellcheck disable=SC1091
+source venv/bin/activate
+
+if ! python -c "import PIL, mutagen, numpy" >/dev/null 2>&1; then
+  say "${DIM}Installing what's needed…${OFF}"
+  python -m pip install --quiet --upgrade pip
+  python -m pip install --quiet -r requirements.txt
+fi
+
+# ── 4. Go ─────────────────────────────────────────────────────────────
+exec python -m app "$@"

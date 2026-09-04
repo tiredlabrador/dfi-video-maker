@@ -1,1 +1,210 @@
-/* placeholder */
+/* DFI Video Maker — the local UI.
+   Dark, because the videos are black-background and you want to judge them
+   against something that isn't glowing white. */
+
+:root {
+  color-scheme: dark;
+  --bg:        #0a0a0b;
+  --panel:     #141416;
+  --panel-2:   #1c1c1f;
+  --line:      #2a2a2e;
+  --text:      #f2f2f3;
+  --muted:     #8d8d94;
+  --accent:    #ffe14d;
+  --accent-dk: #d9bd18;
+  --danger:    #ff6b5e;
+  --ok:        #5ed99a;
+  --radius:    12px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Header ──────────────────────────────────────────────────────── */
+.bar {
+  display: flex; align-items: center; gap: .75rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; background: rgba(10,10,11,.9);
+  backdrop-filter: blur(8px); z-index: 5;
+}
+.mark {
+  font-weight: 800; letter-spacing: .06em; font-size: .8rem;
+  background: var(--accent); color: #000;
+  padding: .25rem .45rem; border-radius: 5px;
+}
+.bar h1 { font-size: 1rem; font-weight: 600; margin: 0; letter-spacing: .01em; }
+.health { margin-left: auto; font-size: .8rem; color: var(--muted); }
+.health.bad { color: var(--danger); }
+
+/* ── Layout ──────────────────────────────────────────────────────── */
+main {
+  display: grid; gap: 1.25rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  padding: 1.5rem; max-width: 1180px; margin: 0 auto;
+}
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+}
+.panel--result { position: sticky; top: 5rem; }
+@media (max-width: 900px) { .panel--result { position: static; } }
+
+h2 {
+  font-size: .75rem; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--muted); font-weight: 600;
+  margin: 1.75rem 0 .75rem;
+}
+h2:first-of-type { margin-top: 0; }
+h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
+     color: var(--muted); margin: 0 0 .5rem; }
+
+/* ── Drop zone ───────────────────────────────────────────────────── */
+.drop {
+  display: flex; flex-direction: column; align-items: center; gap: .25rem;
+  padding: 1.75rem 1rem; text-align: center; cursor: pointer;
+  border: 1.5px dashed var(--line); border-radius: var(--radius);
+  background: var(--panel-2); transition: border-color .15s, background .15s;
+}
+.drop:hover, .drop.is-over { border-color: var(--accent); background: #1f1f16; }
+.drop.is-set { border-style: solid; border-color: var(--ok); }
+.drop--small { padding: .9rem; margin-top: .5rem; }
+.drop-icon { font-size: 1.5rem; color: var(--accent); line-height: 1; }
+.drop-text { font-weight: 500; word-break: break-word; }
+.drop-hint { font-size: .78rem; color: var(--muted); }
+
+/* ── Details read out of the file ────────────────────────────────── */
+.detail {
+  margin-top: .75rem; border: 1px solid var(--line);
+  border-radius: 9px; overflow: hidden;
+}
+.detail-row {
+  display: flex; justify-content: space-between; gap: 1rem;
+  padding: .5rem .75rem; font-size: .85rem;
+}
+.detail-row + .detail-row { border-top: 1px solid var(--line); }
+.detail-row span { color: var(--muted); }
+
+/* ── Fields ──────────────────────────────────────────────────────── */
+.field { margin-bottom: .9rem; }
+.field label {
+  display: block; font-size: .8rem; color: var(--muted); margin-bottom: .3rem;
+}
+.field input {
+  width: 100%; padding: .55rem .7rem; font: inherit;
+  color: var(--text); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.field input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255,225,77,.14);
+}
+.hint { font-size: .78rem; color: var(--muted); margin: .3rem 0 0; }
+.warn { color: var(--accent); }
+
+.advanced { margin-top: 1rem; }
+.advanced summary {
+  cursor: pointer; font-size: .82rem; color: var(--muted);
+  padding: .3rem 0; user-select: none;
+}
+.advanced summary:hover { color: var(--text); }
+
+.link {
+  background: none; border: none; color: var(--muted); font: inherit;
+  font-size: .8rem; text-decoration: underline; cursor: pointer;
+  padding: .4rem 0;
+}
+.link:hover { color: var(--text); }
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+.actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+.btn {
+  flex: 1; min-width: 9rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: .65rem 1.1rem; font: inherit; font-weight: 600;
+  background: var(--accent); color: #000;
+  border: 1px solid var(--accent); border-radius: 9px;
+  cursor: pointer; text-decoration: none; transition: background .15s;
+}
+.btn:hover:not(:disabled) { background: var(--accent-dk); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn--ghost { background: transparent; color: var(--text); border-color: var(--line); }
+.btn--ghost:hover:not(:disabled) { background: var(--panel-2); border-color: var(--muted); }
+.btn--small { flex: none; padding: .5rem .9rem; font-size: .85rem; margin-top: .75rem; }
+
+/* ── The stage: artwork, then the finished video ─────────────────── */
+.stage {
+  display: grid; place-items: center;
+  background: #000; border: 1px solid var(--line); border-radius: var(--radius);
+  min-height: 380px; padding: 1rem; overflow: hidden;
+}
+.stage-empty { text-align: center; color: var(--muted); }
+.stage-empty p { font-size: .85rem; margin: 1rem 0 0; }
+
+/* A little 4:5 phone with a spinning disc, so the empty state shows the idea. */
+.phone {
+  width: 148px; aspect-ratio: 4 / 5; margin: 0 auto;
+  border: 1px solid var(--line); border-radius: 8px;
+  display: grid; place-items: center; background: #050505;
+}
+.disc {
+  width: 76%; aspect-ratio: 1; border-radius: 50%;
+  background: conic-gradient(#2a2a2e, #3a3a40, #232327, #3a3a40, #2a2a2e);
+  display: grid; place-items: center;
+  animation: spin 6s linear infinite;
+}
+.spindle { width: 8%; aspect-ratio: 1; border-radius: 50%; background: #050505; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .disc { animation: none; } }
+
+.stage-art { text-align: center; }
+.stage-art img {
+  max-width: 100%; max-height: 340px; border-radius: 6px; display: block;
+  margin: 0 auto;
+}
+.caption-note { font-size: .8rem; color: var(--muted); margin: .75rem 0 0; }
+
+#player { max-width: 100%; max-height: 62vh; border-radius: 6px; display: block; }
+
+/* ── Progress ────────────────────────────────────────────────────── */
+.progress { margin-top: 1rem; }
+.progress-bar {
+  height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; width: 0; background: var(--accent);
+  border-radius: 3px; transition: width .25s ease;
+}
+.progress-text { font-size: .82rem; color: var(--muted); margin: .5rem 0 0; }
+
+/* ── Errors and facts ────────────────────────────────────────────── */
+.error {
+  margin-top: 1rem; padding: .75rem .9rem; font-size: .87rem;
+  color: #ffd9d5; background: rgba(255,107,94,.1);
+  border: 1px solid rgba(255,107,94,.35); border-radius: 9px;
+}
+.facts { margin-top: 1.25rem; }
+.facts dl {
+  display: grid; grid-template-columns: auto 1fr; gap: .3rem 1rem;
+  margin: 0; font-size: .85rem;
+}
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.facts dd.pass { color: var(--ok); }
+.facts dd.fail { color: var(--danger); }
+
+/* An element with the `hidden` attribute must stay hidden even when a rule
+   below gives it a display value. */
+[hidden] { display: none !important; }

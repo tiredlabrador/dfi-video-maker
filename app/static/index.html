@@ -1,1 +1,107 @@
-<!doctype html><title>DFI Video Maker</title><h1>DFI</h1>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DFI Video Maker</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="mark">DFI</div>
+  <h1>Video Maker</h1>
+  <div class="health" id="health" aria-live="polite"></div>
+</header>
+
+<main>
+  <!-- ── Left: the inputs ─────────────────────────────────────────── -->
+  <section class="panel" aria-labelledby="setup-heading">
+    <h2 id="setup-heading">1 &nbsp;Choose a track</h2>
+
+    <label class="drop" id="audio-drop" for="audio-input">
+      <input type="file" id="audio-input" accept="audio/*,.mp3,.wav,.flac,.m4a,.aiff" hidden>
+      <span class="drop-icon" aria-hidden="true">♫</span>
+      <span class="drop-text" id="audio-label">Drop an audio file here, or click to choose</span>
+      <span class="drop-hint">MP3, WAV, FLAC or M4A</span>
+    </label>
+
+    <div class="detail" id="audio-detail" hidden>
+      <div class="detail-row"><span>Length</span><strong id="audio-duration">—</strong></div>
+      <div class="detail-row"><span>Artwork</span><strong id="artwork-source">—</strong></div>
+    </div>
+
+    <h2>2 &nbsp;Check the details</h2>
+
+    <div class="field">
+      <label for="track">Track</label>
+      <input type="text" id="track" placeholder="Track title" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label for="artist">Artist</label>
+      <input type="text" id="artist" placeholder="Artist name" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label for="clip-start">Clip start</label>
+      <input type="text" id="clip-start" value="0:00" placeholder="mm:ss"
+             inputmode="numeric" autocomplete="off">
+      <p class="hint">Where the 25&nbsp;seconds begins. <span id="clip-warning" class="warn" hidden></span></p>
+    </div>
+
+    <details class="advanced">
+      <summary>Replace the artwork</summary>
+      <label class="drop drop--small" id="art-drop" for="art-input">
+        <input type="file" id="art-input" accept="image/*" hidden>
+        <span class="drop-text" id="art-label">Use a different image instead</span>
+      </label>
+      <button type="button" class="link" id="clear-art" hidden>Remove and use the track's own artwork</button>
+    </details>
+
+    <h2>3 &nbsp;Make the video</h2>
+    <div class="actions">
+      <button type="button" id="preview-btn" class="btn btn--ghost">Quick preview</button>
+      <button type="button" id="render-btn" class="btn">Render full video</button>
+    </div>
+    <p class="hint">A quick preview is small and short — same framing, same spin, ready in a couple of seconds.</p>
+  </section>
+
+  <!-- ── Right: what came out ─────────────────────────────────────── -->
+  <section class="panel panel--result" aria-labelledby="result-heading">
+    <h2 id="result-heading">Result</h2>
+
+    <div class="stage" id="stage">
+      <div class="stage-empty" id="stage-empty">
+        <div class="phone">
+          <div class="disc" aria-hidden="true"><span class="spindle"></span></div>
+        </div>
+        <p>Your video will appear here.</p>
+      </div>
+
+      <div class="stage-art" id="stage-art" hidden>
+        <img id="artwork-preview" alt="The artwork this video will use">
+        <p class="caption-note" id="artwork-note"></p>
+      </div>
+
+      <video id="player" controls playsinline hidden></video>
+    </div>
+
+    <div class="progress" id="progress" hidden>
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <p class="progress-text" id="progress-text">Starting…</p>
+    </div>
+
+    <div class="error" id="error" hidden role="alert"></div>
+
+    <div class="facts" id="facts" hidden>
+      <h3>What was produced</h3>
+      <dl id="facts-list"></dl>
+      <a class="btn btn--small" id="download" download>Download the MP4</a>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

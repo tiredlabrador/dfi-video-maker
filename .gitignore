@@ -32,3 +32,6 @@ assets/fonts/
 
 # Local safety backups
 backups/
+
+# Local UI scratch
+app/static/__uitest.*
