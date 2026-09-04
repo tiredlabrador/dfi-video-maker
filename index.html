@@ -3,26 +3,77 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DFI Video Maker</title>
+<title>DFI Video Maker — setup</title>
 <style>
   :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
   body {
-    margin: 0; min-height: 100vh; display: grid; place-items: center;
-    background: #000; color: #fff; text-align: center;
-    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0; background: #0a0a0b; color: #f2f2f3;
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  main { padding: 2rem; max-width: 34rem; }
-  h1 { font-size: 1.6rem; letter-spacing: .02em; margin: 0 0 .5rem; }
-  p { color: #9a9a9a; margin: .4rem 0; }
-  code { color: #ffe14d; }
+  .wrap { max-width: 40rem; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+  .mark {
+    display: inline-block; font-weight: 800; letter-spacing: .06em;
+    font-size: .8rem; background: #ffe14d; color: #000;
+    padding: .25rem .45rem; border-radius: 5px; margin-bottom: 1.25rem;
+  }
+  h1 { font-size: 1.7rem; margin: 0 0 .4rem; letter-spacing: -.01em; }
+  .lede { color: #8d8d94; margin: 0 0 2.5rem; }
+  h2 {
+    font-size: .75rem; text-transform: uppercase; letter-spacing: .1em;
+    color: #8d8d94; margin: 2.5rem 0 .75rem; font-weight: 600;
+  }
+  p { margin: .6rem 0; }
+  ol { padding-left: 1.2rem; }
+  li { margin: .5rem 0; }
+  pre {
+    background: #141416; border: 1px solid #2a2a2e; border-radius: 9px;
+    padding: .85rem 1rem; overflow-x: auto; margin: .75rem 0;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #ffe14d;
+  }
+  a { color: #ffe14d; }
+  .note {
+    border-left: 2px solid #2a2a2e; padding-left: 1rem;
+    color: #8d8d94; font-size: .93rem;
+  }
+  footer { margin-top: 3rem; color: #56565c; font-size: .85rem; }
 </style>
 </head>
 <body>
-  <main>
-    <h1>DFI Video Maker</h1>
-    <p>Placeholder. Hosting is live and served over HTTPS.</p>
-    <p>The browser version of the renderer will replace this page.</p>
-    <p><code>tiredlabrador/dfi-video-maker</code></p>
-  </main>
+<div class="wrap">
+  <span class="mark">DFI</span>
+  <h1>Video Maker</h1>
+  <p class="lede">Turns a track into a spinning-record video for Instagram. It runs on your own Mac.</p>
+
+  <h2>What you need first</h2>
+  <p>Open <strong>Terminal</strong> (press ⌘&nbsp;+&nbsp;space, type <em>Terminal</em>, press return), then paste each of these and press return.</p>
+
+  <p>1. Homebrew, which installs everything else:</p>
+  <pre>/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</pre>
+  <p class="note">It asks for your Mac password. Typing it shows nothing on screen — that's normal. Skip this if you already have Homebrew.</p>
+
+  <p>2. ffmpeg, which actually makes the video:</p>
+  <pre>brew install ffmpeg</pre>
+
+  <h2>Getting the app</h2>
+  <pre>cd ~/Documents &amp;&amp; git clone https://github.com/tiredlabrador/dfi-video-maker.git &amp;&amp; cd dfi-video-maker &amp;&amp; ./run</pre>
+  <p>That downloads it, sets it up, and opens it in your browser.</p>
+
+  <h2>Every time after that</h2>
+  <p>Open the <strong>dfi-video-maker</strong> folder in Documents and double-click <strong>run</strong>. Leave the Terminal window open while you work — that window is the app. Press <strong>Ctrl&nbsp;+&nbsp;C</strong> in it when you're done.</p>
+
+  <h2>Updates</h2>
+  <p>There's nothing to install. It fetches the latest version each time it starts.</p>
+
+  <h2>The brand font</h2>
+  <p>Squid Boy is licensed, so it isn't in the public download. Without it, videos still render but the captions use a substitute — the app tells you at the top of the page if it's missing. Ask Dom for <code>SquidBoy.otf</code> and put it in <code>assets/fonts</code>.</p>
+
+  <footer>
+    Full instructions and troubleshooting:
+    <a href="https://github.com/tiredlabrador/dfi-video-maker/blob/main/INSTALL.md">INSTALL.md</a>
+  </footer>
+</div>
 </body>
 </html>
