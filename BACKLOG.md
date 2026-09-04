@@ -6,6 +6,10 @@
 straight from track files in the local app. The sheet stays as a place to keep
 links and notes, but the tool doesn't read it and doesn't need to.
 
+(It becomes relevant again for Spotify playlists, since that is where the
+Spotify links live — but there are ways to get those across without the Google
+API. See item 5 under *Open*.)
+
 That removes a lot at once:
 
 - No Google Sheets API, no Drive API, no OAuth, no app-verification review.
@@ -60,16 +64,40 @@ a batch of ten is about a minute. Only worth it if batches get much bigger.
 ### 5. Spotify playlist from the app — **parked**
 Waiting on DFI starting to pay, so not scheduled.
 
-Worth being precise about what it actually needs, because it is easy to
-over-estimate: this needs **Spotify credentials, not Google ones**. The browser
-version of Spotify's login (PKCE) needs no client secret at all, so the secret
-currently sitting in Colab can be retired rather than moved. The one real
-question is where a returning login gets stored now that there is no Drive
-`_config` folder — most likely a small file next to the app.
+**The sheet comes back into the picture here**, because it is where the Spotify
+links live. But it does not have to bring Google authentication with it — that
+is the part worth not assuming. Three ways to get the links across:
+
+1. **Paste the column.** A Spotify link box on each batch row; copy the column
+   out of the sheet, paste once. No API, no auth, no setup.
+2. **Drop the exported CSV in.** Sheets publishes a tab as CSV; the app matches
+   its rows to the loaded tracks. This reuses the matching logic already written
+   and tested in `generate_video.py`. Still no auth.
+3. **Read the sheet through the Google API.** The nicest experience, and the
+   only one needing OAuth. Before committing to it, check whether the
+   `drive.file` scope plus the Google Picker avoids the app-verification review
+   — it grants access only to the one file the user picks and is not classed as
+   sensitive. Verify this rather than assuming it.
+
+**Recommendation: start at 2, keep 3 as an upgrade.** The CSV route is about an
+hour's work, needs nothing from Google, and reuses tested code. Move to 3 only
+if exporting a CSV each time proves annoying in real use — by which point we
+will also know whether the verification question is real.
+
+**Rejected: auto-searching Spotify by track and artist.** It would need no sheet
+at all, but DFI's material is full of dubs, edits, bootlegs and white labels.
+Plenty are not on Spotify, and the ones that are will match the wrong version. A
+human putting the link in is doing real work, which is why the sheet has that
+column.
+
+On credentials: this needs **Spotify** credentials, not Google ones. The browser
+login flow (PKCE) needs no client secret, so the secret currently in Colab
+Secrets can be retired rather than moved. The one open question is where a
+returning login is stored now there is no Drive `_config` folder — most likely a
+small file next to the app.
 
 Google authentication is only needed if we ever want the app to **upload to
-Drive** by itself. With the sheet gone and a zip download working, that may
-never be wanted.
+Drive** by itself, or if we take option 3 above.
 
 ---
 
