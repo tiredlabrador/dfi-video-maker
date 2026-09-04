@@ -600,6 +600,19 @@ def collect_spotify_tracks(rows):
     return {"tracks": tracks, "missing": missing, "duplicates": duplicates}
 
 
+def output_filename(artist, track, position: int = None, total: int = None) -> str:
+    """
+    Name for a finished video. With `position`, it's prefixed with a zero-padded
+    number so the files sort in sheet order rather than alphabetically — which is
+    the order they get posted in.
+    """
+    base = sanitise_filename(f"{str(artist or '').strip()} - {str(track or '').strip()}")
+    if position is None:
+        return f"{base}.mp4"
+    width = max(2, len(str(int(total or position))))
+    return f"{str(position).zfill(width)} {base}.mp4"
+
+
 def plan_playlist_additions(track_ids, existing_ids):
     """Which tracks still need adding, in sheet order. Re-running adds nothing new."""
     already = set(existing_ids or [])
