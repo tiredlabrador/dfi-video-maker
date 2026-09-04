@@ -900,13 +900,16 @@ def _rotate_motion_blurred(record: Image.Image, angle: float, width_deg: float,
 
 
 def iter_frames(record: Image.Image, num_frames: int, cfg: RenderConfig,
-                overlay: Image.Image = None):
+                overlay: Image.Image = None, progress=None):
     """
     Yield one full rotation as RGB images, without touching the disk.
 
     This is the single source of truth for what a frame looks like; render_frames
     writes these out as PNGs, while render_video streams them straight into
     ffmpeg (much faster — no PNG compression and no disk round-trip).
+
+    `progress`, if given, is called with a fraction from 0.0 to 1.0 as frames
+    are produced. It observes the render and must never alter it.
     """
     step = 360.0 / num_frames
     n_samples = cfg.motion_blur_samples or 1
@@ -923,6 +926,8 @@ def iter_frames(record: Image.Image, num_frames: int, cfg: RenderConfig,
         canvas.alpha_composite(_rotate_sharp(spin_source, i * step), (ox, oy))
         if overlay is not None:
             canvas.alpha_composite(overlay)
+        if progress is not None:
+            progress((i + 1) / num_frames)
         yield canvas.convert("RGB")
 
 
@@ -999,7 +1004,7 @@ def build_output(spin_path: str, audio_path: str, start: float, out_path: str,
 # The reusable entry point
 # ---------------------------------------------------------------------------
 def stream_render(record, overlay, audio_path, start, output_path,
-                  num_frames: int, cfg: RenderConfig) -> None:
+                  num_frames: int, cfg: RenderConfig, progress=None) -> None:
     """
     Encode the whole clip in ONE ffmpeg pass, streaming frames in over a pipe.
 
@@ -1023,10 +1028,17 @@ def stream_render(record, overlay, audio_path, start, output_path,
     process = subprocess.Popen(command, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
+        # Only `num_frames` frames are unique (one rotation); the rest of the
+        # clip reuses them. Building the cycle is the slow half, so it gets the
+        # bulk of the progress bar and writing to ffmpeg gets the tail.
         cycle = [frame.tobytes()
-                 for frame in iter_frames(record, num_frames, cfg, overlay)]
+                 for frame in iter_frames(
+                     record, num_frames, cfg, overlay,
+                     progress=(lambda f: progress(0.7 * f)) if progress else None)]
         for i in range(total):
             process.stdin.write(cycle[i % num_frames])
+            if progress is not None and i % 25 == 0:
+                progress(0.7 + 0.25 * (i / total))
         process.stdin.close()
     except BrokenPipeError:
         pass                                   # ffmpeg died; the error is below
@@ -1037,7 +1049,8 @@ def stream_render(record, overlay, audio_path, start, output_path,
 
 
 def render_video(audio_path: str, artwork_path, clip_start, output_path: str,
-                 cfg: RenderConfig, track: str = None, artist: str = None) -> str:
+                 cfg: RenderConfig, track: str = None, artist: str = None,
+                 progress=None) -> str:
     """
     Render one spinning-record MP4.
 
@@ -1062,7 +1075,10 @@ def render_video(audio_path: str, artwork_path, clip_start, output_path: str,
     overlay = build_static_layer(cfg, track, artist)   # branding + burnt-in caption
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
-    stream_render(record, overlay, audio_path, start, output_path, num_frames, cfg)
+    stream_render(record, overlay, audio_path, start, output_path, num_frames,
+                  cfg, progress=progress)
+    if progress is not None:
+        progress(1.0)
     return output_path
 
 
