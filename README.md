@@ -25,10 +25,12 @@ the same way, pulling from GitHub every time it starts.
 
 ### Which one to use
 
-The local app is quicker and much easier to use, but it works from files on your
-own machine — it does not read the Google Sheet or upload to Drive yet. The
-notebook still does the whole sheet-to-Drive round trip. Both are supported; the
-notebook is the fallback and is no longer being developed.
+**Use the local app.** Videos are made from track files on your own machine —
+that is the design, not a limitation. The Google Sheet is a place to keep links
+and notes; the app does not read it and does not need to.
+
+The notebook still does the full sheet-to-Drive round trip and still works. It
+is the fallback, and is no longer being developed.
 
 ---
 

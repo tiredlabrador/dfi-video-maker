@@ -12,8 +12,8 @@ Then: double-click **run**, drag your audio files in, check the details it fille
 in for you, press **Render the batch**, download the zip. It numbers everything in
 posting order.
 
-It works from files on your computer, so it doesn't read the sheet or put anything
-in Drive — you do that bit yourself.
+It works from the track files on your computer. The sheet is still where links
+and notes live, but you don't need it to make videos any more.
 
 ## The Colab notebook (does the whole round trip)
 

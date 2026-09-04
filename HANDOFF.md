@@ -7,6 +7,12 @@
 > The browser research was not wasted: `BROWSER_FINDINGS.md` records what the
 > browser *can* actually do, measured rather than assumed, if this is ever
 > revisited. Section 9 below is the part that is now out of date.
+>
+> **Also superseded: the Google Sheet.** Videos are now made straight from track
+> files, so the sheet is no longer part of the pipeline — it stays as a store of
+> links and notes. Sections 4, 5 and most of 6 and 7 describe the sheet-driven
+> Colab flow, which still works but is the fallback. See `BACKLOG.md` for the
+> current direction.
 
 # DFI Video Maker — full context handoff
 
