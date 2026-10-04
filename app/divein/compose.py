@@ -506,14 +506,16 @@ class Scene:
         n = len(analysis["gap"])
         i = min(f, n - 1)
         kick = bool(analysis["kick"][i])
+        hit = bool(analysis.get("hit", analysis["kick"])[i]) and not kick
         lines = [f"frame {f}   {f / self.fps:6.2f}s",
                  f"rms {analysis['rms_db'][i]:6.1f} dB   level {analysis['level'][i]:.2f}",
                  f"gap {analysis['gap'][i]:5.1f}   glow {analysis['glow'][i]:.2f}"]
         for row, text in enumerate(lines):
             draw.text((x0 + 12, y0 + 10 + row * 28), text, font=font, fill="white")
-        if kick:
+        if kick or hit:
             draw.rectangle([x0 + w - 92, y0 + 8, x0 + w - 10, y0 + 40], fill=yellow)
-            draw.text((x0 + w - 82, y0 + 11), "KICK", font=font, fill="black")
+            draw.text((x0 + w - 82, y0 + 11), "KICK" if kick else "HIT",
+                      font=font, fill="black")
         # The last two seconds: level (white), gap (yellow), kicks (ticks).
         gx, gy, gw, gh = x0 + 12, y0 + 100, w - 24, 78
         span = 2 * self.fps

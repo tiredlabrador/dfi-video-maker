@@ -85,6 +85,11 @@ DEFAULTS: dict = {
     # Audio analysis and how it drives the glyph.
     "audio": {
         "clip_seconds": 25.0, "sample_rate": 44100,
+        # What moves the coil. "kicks": loudness plus detected kick drums (the
+        # kicks snap it fully open and trigger the ghost twitch). "level": just
+        # how loud it is — simpler, nothing to misfire; the twitch fires on
+        # sudden jumps in loudness instead.
+        "drive": "kicks",
         # Loudness is scaled between these percentiles of the clip's own range,
         # so one huge peak can't squash everything else into "quiet".
         "rms_low_pct": 5.0, "rms_high_pct": 95.0, "silence_db": -50.0,
@@ -102,6 +107,9 @@ DEFAULTS: dict = {
         # How sharp the attack must be: the rise over ~12ms as a fraction of
         # the level it reaches. Stops held bass notes counting as kicks.
         "kick_min_rise": 0.25,
+        # Volume mode's twitch trigger: a jump of at least this many dB within
+        # two frames, while the level (0..1) is at least hit_min_level.
+        "hit_rise_db": 4.0, "hit_min_level": 0.3,
     },
 
     # The ghost "stutter" on each kick.
@@ -199,6 +207,7 @@ RANGES = {
     "audio.kick_min_interval_ms": (50, 2000), "audio.kick_floor": (0, 1),
     "audio.kick_relative": (0, 2), "audio.kick_window_s": (0.1, 30),
     "audio.kick_lookahead_s": (0, 5), "audio.kick_min_rise": (0, 1),
+    "audio.hit_rise_db": (0.1, 60), "audio.hit_min_level": (0, 1),
     "twitch.min_px": (0, 100), "twitch.max_px": (0, 100), "twitch.release_ms": (1, 2000),
     "square.size": (64, 4096), "square.jpg_quality": (1, 100),
     "export.crf": (0, 51), "export.max_mbps": (0.5, 200),
@@ -230,6 +239,8 @@ def validate(cfg: dict) -> dict:
                 raise ConfigError(f"{group}.{name} must look like #fffe01.")
     if cfg["accent"] not in cfg["accents"]:
         raise ConfigError(f"accent must be one of: {', '.join(cfg['accents'])}.")
+    if cfg["audio"]["drive"] not in ("kicks", "level"):
+        raise ConfigError("audio.drive must be kicks or level.")
     if cfg["glyph"]["rings"]["anchor"] not in ("centre", "bottom"):
         raise ConfigError("glyph.rings.anchor must be centre or bottom.")
     if not cfg["tape"]["text"].strip():

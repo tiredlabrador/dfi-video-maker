@@ -227,6 +227,29 @@ def _bands(mono: np.ndarray, sr: int, fps: int, n_frames: int, count: int,
     return out
 
 
+def _volume_hits(rms_db: np.ndarray, level: np.ndarray, silent: np.ndarray,
+                 fps: int, cfg: dict) -> np.ndarray:
+    """
+    Sudden jumps in overall loudness, for the twitch in volume mode.
+
+    No frequency analysis: a hit is the loudness rising by `hit_rise_db` within
+    a couple of frames, while it's reasonably loud. Kicks are the usual cause,
+    but anything that slams in counts; slow builds don't.
+    """
+    a = cfg["audio"]
+    n = len(rms_db)
+    hits = np.zeros(n, dtype=bool)
+    gap = max(1, int(round(a["kick_min_interval_ms"] / 1000.0 * fps)))
+    last = -gap
+    for f in range(1, n):
+        before = rms_db[f - 1] if f < 2 else min(rms_db[f - 1], rms_db[f - 2])
+        if (rms_db[f] - before >= a["hit_rise_db"] and level[f] >= a["hit_min_level"]
+                and not silent[f] and f - last >= gap):
+            hits[f] = True
+            last = f
+    return hits
+
+
 def _twitch(kicks: np.ndarray, fps: int, cfg: dict, episode: str):
     n = len(kicks)
     tx, ty = np.zeros(n), np.zeros(n)
@@ -265,11 +288,16 @@ def analyse(samples: np.ndarray, sr: int, fps: int, cfg: dict,
     rms_db = _frame_rms_db(mono, sr, fps, n_frames)
     silent = rms_db < a["silence_db"]
     level = _normalise(rms_db, silent, a["rms_low_pct"], a["rms_high_pct"])
-    kicks = _detect_kicks(mono, sr, fps, n_frames, cfg) if not silent.all() \
-        else np.zeros(n_frames, dtype=bool)
+    by_level = a["drive"] == "level"
+    if by_level or silent.all():
+        kicks = np.zeros(n_frames, dtype=bool)
+    else:
+        kicks = _detect_kicks(mono, sr, fps, n_frames, cfg)
 
-    target = np.interp(level, [0.0, 0.5, 1.0],
-                       [a["gap_low"], a["gap_rest"], a["gap_loud"]])
+    # Volume mode: loudness alone spans the whole range, so the loudest
+    # moments open the coil fully. Kick mode keeps the top end for kicks.
+    top = a["gap_kick"] if by_level else a["gap_loud"]
+    target = np.interp(level, [0.0, 0.5, 1.0], [a["gap_low"], a["gap_rest"], top])
     target[silent] = a["gap_silence"]
     target[kicks] = a["gap_kick"]
     release_frames = a["release_ms"] / 1000.0 * fps
@@ -286,7 +314,9 @@ def analyse(samples: np.ndarray, sr: int, fps: int, cfg: dict,
         bands[:, b] = smooth_envelope(bands[:, b], a["attack_frames"], release_frames)
     bands[silent] = 0.0
 
-    tx, ty = _twitch(kicks, fps, cfg, episode)
-    return {"rms_db": rms_db, "level": level, "kick": kicks, "gap": gap,
+    # The twitch fires on kicks, or in volume mode on sudden loudness jumps.
+    hits = _volume_hits(rms_db, level, silent, fps, cfg) if by_level else kicks
+    tx, ty = _twitch(hits, fps, cfg, episode)
+    return {"rms_db": rms_db, "level": level, "kick": kicks, "hit": hits, "gap": gap,
             "glow": glow, "twitch_x": tx, "twitch_y": ty, "bands": bands,
             "mono": mono.astype(np.float32), "sample_rate": sr, "fps": fps}

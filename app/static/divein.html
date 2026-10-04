@@ -78,7 +78,12 @@
       <button type="button" role="radio" data-value="green" aria-checked="false"><i style="background:#3dff00"></i>Green</button>
       <button type="button" role="radio" data-value="white" aria-checked="false"><i style="background:#ffffff"></i>White</button>
     </div>
-    <label class="check"><input type="checkbox" id="twitch" checked> Kick twitch on the ghost layer</label>
+    <p class="hint control-label">The rings move with</p>
+    <div class="segmented" role="radiogroup" aria-label="Motion" id="motion-choice">
+      <button type="button" role="radio" data-value="kicks" aria-checked="true">Kick drums</button>
+      <button type="button" role="radio" data-value="level" aria-checked="false">Volume</button>
+    </div>
+    <label class="check"><input type="checkbox" id="twitch" checked> Ghost twitch on each hit</label>
     <label class="check"><input type="checkbox" id="debug"> Debug overlay (level, kicks, gap)</label>
 
     <h2>5 &nbsp;Make it</h2>

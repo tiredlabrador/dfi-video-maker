@@ -419,3 +419,14 @@ def test_a_reloaded_page_still_gets_its_previews(server, media):
     # Within one page, an older request is still dropped.
     stale = post_json(server, "/api/divein/still", design(p, seq=200, client="page-a"), raw=True)
     assert stale.status == 204
+
+
+def test_the_motion_can_follow_volume_instead_of_kicks(server, media):
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    ok = post_json(server, "/api/divein/still", design(p, a, time=1.0, motion="level"), raw=True)
+    assert ok.status == 200
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        post_json(server, "/api/divein/still", design(p, a, time=1.0, motion="vibes"), raw=True)
+    assert caught.value.code == 400

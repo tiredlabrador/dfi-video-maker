@@ -89,3 +89,5 @@ input[type=range] { accent-color: var(--accent); }
   color: var(--accent); background: rgba(255,225,77,.07);
   border: 1px solid rgba(255,225,77,.3); border-radius: 9px;
 }
+
+.control-label { margin: .25rem 0 .35rem; }

@@ -246,7 +246,8 @@ class DiveInService:
     # too, one would silently win — so say where to change them instead.
     PAGE_CONTROLS = {("glyph", "mode"): "the Style buttons",
                      ("twitch", "enabled"): "the Kick twitch checkbox",
-                     ("audio", "clip_seconds"): "the Clip length box"}
+                     ("audio", "clip_seconds"): "the Clip length box",
+                     ("audio", "drive"): "the Motion buttons"}
 
     def _config(self, d: dict) -> dict:
         overrides = d.get("overrides") or {}
@@ -268,6 +269,10 @@ class DiveInService:
             raise BadRequest("Glyph style must be rings, bars, line or none.")
         cfg["glyph"]["mode"] = mode
         cfg["twitch"]["enabled"] = bool(d.get("twitch", cfg["twitch"]["enabled"]))
+        motion = d.get("motion", cfg["audio"]["drive"])
+        if motion not in ("kicks", "level"):
+            raise BadRequest("Motion must follow kicks or level.")
+        cfg["audio"]["drive"] = motion
         if d.get("clip_seconds") is not None:
             seconds = self._number(d["clip_seconds"], "Clip length")
             if not 0.5 <= seconds <= 120:

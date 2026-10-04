@@ -19,6 +19,7 @@ const state = {
   format: 'portrait',
   glyph: 'rings',
   colour: 'yellow',
+  motion: 'kicks',
   overrides: {},
   defaults: null,
   polling: null,
@@ -72,6 +73,7 @@ function design(extra = {}) {
     clip_seconds: Number($('clip-seconds').value) || 25,
     glyph: state.glyph,
     colour: state.colour,
+    motion: state.motion,
     twitch: $('twitch').checked,
     debug: $('debug').checked,
     overrides: state.overrides,
@@ -98,7 +100,7 @@ function save() {
     localStorage.setItem(STORE, JSON.stringify({
       artist: $('artist').value, episode: $('episode').value,
       starts: $('starts').value, clip: $('clip-seconds').value,
-      glyph: state.glyph, colour: state.colour,
+      glyph: state.glyph, colour: state.colour, motion: state.motion,
       twitch: $('twitch').checked, debug: $('debug').checked,
       overrides: $('overrides').value,
     }));
@@ -118,6 +120,8 @@ function restore() {
   $('overrides').value = saved.overrides ?? '{}';
   state.glyph = saved.glyph || 'rings';
   state.colour = saved.colour || 'yellow';
+  state.motion = saved.motion || 'kicks';
+  setSegment('motion-choice', state.motion);
   setSegment('glyph-choice', state.glyph);
   setSegment('colour-choice', state.colour);
   try { state.overrides = JSON.parse($('overrides').value || '{}'); } catch { state.overrides = {}; }
@@ -580,6 +584,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('reset-crop').addEventListener('click', () => { resetCrop(); nudged(); });
   wireSegment('glyph-choice', (v) => { state.glyph = v; designChanged(0); });
   wireSegment('colour-choice', (v) => { state.colour = v; designChanged(0); });
+  wireSegment('motion-choice', (v) => { state.motion = v; save(); if ($('scrub-on').checked) scheduleStill(0); });
   wireSegment('format-choice', setFormat);
 
   $('scrub-on').addEventListener('change', () => { updateScrub(); scheduleStill(0); });

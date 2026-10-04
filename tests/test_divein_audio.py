@@ -287,3 +287,68 @@ def test_a_kick_lands_on_the_nearest_frame(cfg, offset):
     samples, _ = beat(4.0, kicks_at=times, hats=False)
     found = list(np.nonzero(analyse(samples, SR, FPS, cfg, episode="02.01")["kick"])[0])
     assert found == [int(round(x * FPS)) for x in times]
+
+
+# ── "volume" mode: no kick detection at all ─────────────────────────────
+@pytest.fixture
+def level_cfg(cfg):
+    cfg["audio"]["drive"] = "level"
+    return cfg
+
+
+def test_volume_mode_finds_no_kicks_but_twitches_on_sudden_jumps(level_cfg):
+    """Dom wants the twitch in volume mode too: it fires on sudden loudness jumps."""
+    samples, times = beat(4.0, hats=False)
+    result = analyse(samples, SR, FPS, level_cfg, episode="02.01")
+    assert result["kick"].sum() == 0
+    hits = np.nonzero(result["hit"])[0]
+    expected = [int(round(t * FPS)) for t in times]
+    assert len(hits) == len(expected)
+    assert all(abs(h - e) <= 1 for h, e in zip(hits, expected))
+    for h in hits:
+        assert np.hypot(result["twitch_x"][h], result["twitch_y"][h]) >= 3.0
+
+
+def test_volume_mode_does_not_twitch_on_a_slow_build(level_cfg):
+    t = np.arange(6 * SR) / SR
+    swell = (0.5 * (t / 6) ** 2 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    result = analyse(np.stack([swell, swell], 1), SR, FPS, level_cfg, episode="x")
+    assert result["hit"].sum() == 0 and not result["twitch_x"].any()
+
+
+def test_volume_mode_twitch_can_still_be_switched_off(level_cfg):
+    level_cfg["twitch"]["enabled"] = False
+    samples, _ = beat(4.0)
+    result = analyse(samples, SR, FPS, level_cfg, episode="02.01")
+    assert not result["twitch_x"].any()
+
+
+def test_in_volume_mode_louder_opens_the_coil_further(level_cfg):
+    t = np.arange(6 * SR) / SR
+    tone = 0.5 * np.sin(2 * np.pi * 220 * t)
+    tone[: 3 * SR] *= 0.1                              # first half much quieter
+    samples = np.stack([tone, tone], 1).astype(np.float32)
+    gap = analyse(samples, SR, FPS, level_cfg, episode="02.01")["gap"]
+    a = level_cfg["audio"]
+    assert gap[30:80].mean() == pytest.approx(a["gap_low"], abs=0.5)
+    assert gap[110:170].mean() == pytest.approx(a["gap_kick"], abs=0.5)
+
+
+def test_in_volume_mode_the_loudest_moments_reach_full_open(level_cfg):
+    samples, _ = beat(4.0, hats=False)
+    gap = analyse(samples, SR, FPS, level_cfg, episode="02.01")["gap"]
+    assert gap.max() == pytest.approx(level_cfg["audio"]["gap_kick"], abs=0.5)
+
+
+def test_in_volume_mode_a_steady_sound_holds_steady(level_cfg):
+    t = np.arange(4 * SR) / SR
+    tone = (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    gap = analyse(np.stack([tone, tone], 1), SR, FPS, level_cfg, episode="02.01")["gap"]
+    assert np.ptp(gap[5:]) < 0.5
+    result = analyse(np.stack([tone, tone], 1), SR, FPS, level_cfg, episode="02.01")
+    assert result["hit"].sum() == 0
+
+
+def test_in_volume_mode_silence_still_closes_the_coil(level_cfg):
+    gap = analyse(np.zeros((SR * 2, 2), np.float32), SR, FPS, level_cfg, episode="x")["gap"]
+    assert gap.max() == pytest.approx(level_cfg["audio"]["gap_silence"])
