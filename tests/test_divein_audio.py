@@ -52,7 +52,10 @@ def beat(seconds=6.0, kicks_at=None, hats=True, pad_level=0.05, sr=SR):
 
 @pytest.fixture
 def cfg():
-    return merge_config({})
+    """Kick mode: most of these tests are about the kick detector."""
+    c = merge_config({})
+    c["audio"]["drive"] = "kicks"
+    return c
 
 
 # ── per-frame shape ─────────────────────────────────────────────────────

@@ -79,11 +79,11 @@ DEFAULTS: dict = {
     # Audio analysis and how it drives the glyph.
     "audio": {
         "clip_seconds": 25.0, "sample_rate": 44100,
-        # What moves the coil. "kicks": loudness plus detected kick drums (the
-        # kicks snap it fully open and trigger the ghost twitch). "level": just
-        # how loud it is — simpler, nothing to misfire; the twitch fires on
-        # sudden jumps in loudness instead.
-        "drive": "kicks",
+        # What moves the coil. "level" (the default): just how loud it is —
+        # simple, nothing to misfire; the twitch fires on sudden jumps in
+        # loudness. "kicks": loudness plus detected kick drums, which snap it
+        # fully open and trigger the twitch.
+        "drive": "level",
         # Loudness is scaled between these percentiles of the clip's own range,
         # so one huge peak can't squash everything else into "quiet".
         "rms_low_pct": 5.0, "rms_high_pct": 95.0, "silence_db": -50.0,

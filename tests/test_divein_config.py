@@ -131,3 +131,8 @@ def test_out_of_range_settings_are_refused_with_their_name(override, words):
     with pytest.raises(ConfigError) as caught:
         merge_config(override)
     assert words in str(caught.value)
+
+
+def test_the_rings_follow_volume_by_default():
+    """Dom: volume is the default; kick drums are the alternative."""
+    assert merge_config({})["audio"]["drive"] == "level"

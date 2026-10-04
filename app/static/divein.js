@@ -19,7 +19,7 @@ const state = {
   crop: { zoom: 1, cx: 0.5, cy: 0.5 },
   format: 'portrait',
   colour: 'yellow',
-  motion: 'kicks',
+  motion: 'level',
   overrides: {},
   defaults: null,
   polling: null,
@@ -117,7 +117,9 @@ function save() {
     localStorage.setItem(STORE, JSON.stringify({
       artist: $('artist').value, episode: $('episode').value,
       clip: $('clip-seconds').value, rings: $('rings-on').checked,
-      colour: state.colour, motion: state.motion, twitch: $('twitch').checked,
+      // Saved under a new name: an older saved 'kicks' predates Volume
+      // becoming the default, so it's left behind rather than carried over.
+      colour: state.colour, rings_follow: state.motion, twitch: $('twitch').checked,
       overrides: $('overrides').value,
     }));
   } catch { /* private window: fine */ }
@@ -134,7 +136,7 @@ function restore() {
   $('twitch').checked = saved.twitch ?? true;
   $('overrides').value = saved.overrides ?? '{}';
   state.colour = saved.colour || 'yellow';
-  state.motion = saved.motion || 'kicks';
+  state.motion = saved.rings_follow || 'level';
   setSegment('colour-choice', state.colour);
   setSegment('motion-choice', state.motion);
   try { state.overrides = JSON.parse($('overrides').value || '{}'); } catch { state.overrides = {}; }
