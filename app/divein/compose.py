@@ -63,7 +63,19 @@ def load_photo(path: str) -> Image.Image:
     `grayscale()` filter the spec was written against.
     """
     img = Image.open(path)
+    if img.format == "JPEG":
+        # Ask the decoder for a smaller picture up front: a 48MP phone photo
+        # otherwise briefly costs the best part of a gigabyte.
+        img.draft("RGB", (MAX_SOURCE, MAX_SOURCE))
     img = ImageOps.exif_transpose(img)
+    if img.mode in ("I;16", "I;16B", "I;16L", "I", "F"):
+        # 16-bit and 32-bit greyscale: converting straight to 8-bit clips every
+        # value above 255 to white, so scale it down properly instead.
+        deep = np.asarray(img, dtype=np.float64)
+        top = 65535.0 if deep.max() > 255 else 255.0
+        if img.mode == "F" and deep.max() <= 1.0:
+            top = 1.0
+        img = Image.fromarray(np.clip(deep / top * 255.0, 0, 255).astype(np.uint8), "L")
     if img.mode in ("RGBA", "LA", "P"):
         img = img.convert("RGBA")
         backing = Image.new("RGBA", img.size, (0, 0, 0, 255))
@@ -124,10 +136,42 @@ def layout_name(text: str, cfg: dict, max_width: float | None = None):
                                      font.getlength(" ".join(words[i:]))))
         raw = [" ".join(words[:best]), " ".join(words[best:])]
 
-    while size > n["min_font_size"] and \
-            max(_font(n["font"], size).getlength(line) for line in raw) > max_width:
+    def too_wide(sz):
+        f = _font(n["font"], sz)
+        return max(f.getlength(line) for line in raw) > max_width
+
+    while size > n["min_font_size"] and too_wide(size):
         size -= 2
-    return raw, max(size, int(n["min_font_size"]))
+    # Below the preferred minimum only if it still doesn't fit: running off the
+    # edge of the picture is worse than small type.
+    while size > 24 and too_wide(size):
+        size -= 2
+    return raw, size
+
+
+def missing_glyphs(text: str, cfg: dict) -> list[str]:
+    """
+    Characters the brand font can't draw.
+
+    Squid Boy covers Latin letters (accents included) and common punctuation,
+    but not Cyrillic, Chinese, Japanese or emoji — those would just vanish.
+    """
+    font = _font(cfg["name"]["font"], 60)
+
+    def ink(ch):
+        img = Image.new("L", (120, 120), 0)
+        ImageDraw.Draw(img).text((20, 20), ch, font=font, fill=255)
+        return img.tobytes()
+
+    placeholder = ink("\uffff")          # what the font draws for "no such letter"
+    missing = []
+    for ch in dict.fromkeys(str(text or "")):
+        if ch.isspace():
+            continue
+        drawn = ink(ch)
+        if not any(drawn) or drawn == placeholder:
+            missing.append(ch)
+    return missing
 
 
 # ── blend maths (all on 0..1 floats) ─────────────────────────────────────
@@ -169,6 +213,7 @@ class Scene:
         self._overlay = self._make_overlay(artist)
         self._grain_cache: dict[int, np.ndarray] = {}
         self._background_cache: dict[int, np.ndarray] = {}
+        self._grain_sequence: list[int] = []
 
     # ── preparation ──────────────────────────────────────────────────────
     def _prepare_photo(self, photo: Image.Image, crop: dict | None) -> None:
@@ -272,16 +317,26 @@ class Scene:
 
     # ── grain ────────────────────────────────────────────────────────────
     def grain_index(self, frame: int) -> int:
-        """Which grain variation a frame uses. Changes every `every_frames`."""
+        """
+        Which grain variation a frame uses. Changes every `every_frames`.
+
+        Each step moves to a different variation (a seeded random step of at
+        least one), so the grain can never hold for longer than it should. The
+        sequence is built from the start, so it's the same whatever order frames
+        are asked for in.
+        """
         gr = self.cfg["grain"]
         pool = max(2, int(gr["pool"]))
         pair = frame // max(1, int(gr["every_frames"]))
-        def pick(p):
-            return seed_for(self.episode, f"grain-order-{p}") % pool
-        k = pick(pair)
-        if pair > 0 and k == pick(pair - 1):        # never the same twice in a row
-            k = (k + 1) % pool
-        return k
+        seq = self._grain_sequence
+        while len(seq) <= pair:
+            p = len(seq)
+            if p == 0:
+                seq.append(seed_for(self.episode, "grain-order-0") % pool)
+            else:
+                step = 1 + seed_for(self.episode, f"grain-order-{p}") % (pool - 1)
+                seq.append((seq[-1] + step) % pool)
+        return seq[pair]
 
     def _grain(self, k: int) -> np.ndarray:
         # Kept as 8-bit (a quarter of the memory); noise doesn't need more.

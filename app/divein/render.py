@@ -67,13 +67,24 @@ def render_video(scene, analysis, samples, sample_rate: int, out_path: str,
                     "-c:a", "aac", "-ac", "2", "-ar", "44100", "-b:a", "192k",
                     "-t", f"{seconds:.3f}", "-movflags", "+faststart", out_path]
 
+        failure = []
+
         def frames():
-            for f in range(total):
-                if f % 10 == 0:
-                    report(0.97 * f / total, "Drawing frames")
-                yield scene.frame(f, analysis, debug=debug).tobytes()
+            # If drawing fails, stop feeding the encoder and let it finish, so
+            # it doesn't linger; the error is raised once it has exited.
+            try:
+                for f in range(total):
+                    if f % 10 == 0:
+                        report(0.97 * f / total, "Drawing frames")
+                    yield scene.frame(f, analysis, debug=debug).tobytes()
+            except Exception as exc:                   # noqa: BLE001
+                failure.append(exc)
 
         gv.pipe_frames_to(command, frames())
+        if failure:
+            if os.path.exists(out_path):
+                os.remove(out_path)                    # don't leave half a video
+            raise failure[0]
     finally:
         if os.path.exists(wav_path):
             os.remove(wav_path)

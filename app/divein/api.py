@@ -11,18 +11,22 @@ the app sets for single tracks.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import math
 import os
 import re
 import subprocess
 import tempfile
 import threading
+import traceback
+import unicodedata
 from collections import OrderedDict
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import generate_video as gv
 from app.divein.audio import analyse, decode_excerpt
-from app.divein.compose import Scene, font_path, load_photo
+from app.divein.compose import Scene, font_path, load_photo, missing_glyphs
 from app.divein.config import DEFAULTS, ConfigError, merge_config
 from app.divein.render import render_still, render_video
 
@@ -35,22 +39,59 @@ class BadRequest(ValueError):
 
 
 class _LRU(OrderedDict):
+    """
+    A small cache that keeps the most recent few things.
+
+    If two requests want the same thing at once, the second waits for the
+    first rather than building it again — so a burst of preview requests
+    can't pile up duplicate copies in memory.
+    """
     def __init__(self, size):
         super().__init__()
         self.size = size
         self.lock = threading.Lock()
+        self._building: dict = {}
 
     def get_or(self, key, make):
-        with self.lock:
-            if key in self:
-                self.move_to_end(key)
-                return self[key]
-        value = make()
-        with self.lock:
-            self[key] = value
-            while len(self) > self.size:
-                self.popitem(last=False)
-        return value
+        while True:
+            with self.lock:
+                if key in self:
+                    self.move_to_end(key)
+                    return self[key]
+                waiting = self._building.get(key)
+                if waiting is None:
+                    done = threading.Event()
+                    self._building[key] = done
+                    break
+            waiting.wait()
+        try:
+            value = make()
+            with self.lock:
+                self[key] = value
+                while len(self) > self.size:
+                    self.popitem(last=False)
+            return value
+        finally:
+            with self.lock:
+                self._building.pop(key, None)
+            done.set()
+
+
+def frame_at(time: float, fps: int, seconds: float) -> int:
+    """The frame shown at `time` seconds into the clip (nearest, not floored)."""
+    last = max(0, int(round(seconds * fps)) - 1)
+    return int(min(last, max(0, round(float(time) * fps))))
+
+
+def _scrub_paths(message: str) -> str:
+    """Keep private file paths out of anything shown on the page."""
+    return re.sub(r"(/[^\s:'\"]+)+", "…", message)
+
+
+def _ascii_name(name: str) -> str:
+    """A plain-ASCII version of a filename, for the one place that needs it."""
+    folded = unicodedata.normalize("NFKD", name.replace("’", "'").replace("–", "-"))
+    return folded.encode("ascii", "ignore").decode() or "dive-in"
 
 
 class DiveInService:
@@ -62,13 +103,16 @@ class DiveInService:
         os.makedirs(self.outputs, exist_ok=True)
         self.jobs = jobs
         self._photos = _LRU(4)
-        self._scenes = _LRU(3)
+        self._scenes = _LRU(2)
         self._audio = _LRU(6)
         self._files: dict[str, list] = {}
+        self._durations: dict[str, float] = {}
+        self._still_lock = threading.Lock()
+        self._latest_still = -1
 
     # ── routing ──────────────────────────────────────────────────────────
     def handle(self, h, method: str, path: str) -> None:
-        """Answer one /api/divein/ request on handler `h`."""
+        """Answer one /api/divein/ request on handler `h`. Always answers."""
         try:
             if method == "GET" and path == "/api/divein/defaults":
                 return h._json(200, self.defaults())
@@ -77,8 +121,12 @@ class DiveInService:
             if method == "POST" and path == "/api/divein/upload":
                 return h._json(200, self.upload(h))
             if method == "POST" and path == "/api/divein/still":
-                body = self._still(self._read_json(h))
-                return h._send(200, body, "image/jpeg")
+                result = self._still(self._read_json(h))
+                if result is None:                      # a newer one superseded it
+                    return h._send(204, b"", "image/jpeg")
+                body, warning = result
+                extra = {"X-Divein-Warning": quote(warning)} if warning else None
+                return h._send(200, body, "image/jpeg", extra)
             if method == "POST" and path in ("/api/divein/preview", "/api/divein/export"):
                 payload = self._read_json(h)
                 job = self._start(payload, preview=path.endswith("preview"))
@@ -86,6 +134,11 @@ class DiveInService:
             return h._error(404, "Not found.")
         except (BadRequest, ConfigError) as exc:
             return h._error(400, str(exc))
+        except Exception as exc:                       # noqa: BLE001
+            # Never leave the page with a dropped connection: say something.
+            traceback.print_exc()
+            return h._error(500, "Something went wrong drawing that: "
+                                 + _scrub_paths(str(exc) or exc.__class__.__name__))
 
     def defaults(self) -> dict:
         fonts = {name: font_path(name) is not None and
@@ -105,7 +158,9 @@ class DiveInService:
         if length > MAX_UPLOAD_BYTES:
             raise BadRequest("That file is over 3GB.")
 
-        name = h.headers.get("X-Filename", "") or "upload"
+        # The page percent-encodes the name: browsers refuse to send anything
+        # beyond Latin-1 in a header, and names like "Dom’s mix" are common.
+        name = unquote(h.headers.get("X-Filename", "")) or "upload"
         _, ext = os.path.splitext(os.path.basename(name))
         ext = re.sub(r"[^A-Za-z0-9.]", "", ext)[:12]
         digest = hashlib.sha256()
@@ -140,6 +195,7 @@ class DiveInService:
             info.update(width=photo.width, height=photo.height)
         else:
             info["duration"] = self._duration(final)
+            self._durations[token] = info["duration"]
         return info
 
     def _duration(self, path: str) -> float:
@@ -183,26 +239,58 @@ class DiveInService:
             raise BadRequest("The request wasn't a JSON object.")
         return data
 
+    # Settings that belong to controls on the page. If the Tuning box set them
+    # too, one would silently win — so say where to change them instead.
+    PAGE_CONTROLS = {("glyph", "mode"): "the Style buttons",
+                     ("twitch", "enabled"): "the Kick twitch checkbox",
+                     ("audio", "clip_seconds"): "the Clip length box"}
+
     def _config(self, d: dict) -> dict:
-        cfg = merge_config(d.get("overrides") or {})
+        overrides = d.get("overrides") or {}
+        if not isinstance(overrides, dict):
+            raise BadRequest("The Tuning box must contain a JSON object, like {}.")
+        for (group, key), control in self.PAGE_CONTROLS.items():
+            if isinstance(overrides.get(group), dict) and key in overrides[group]:
+                raise BadRequest(f"{group}.{key} is set with {control} on the page, "
+                                 f"not in Tuning. (Style, twitch and clip length live there.)")
+        cfg = merge_config(overrides)
         mode = d.get("glyph", cfg["glyph"]["mode"])
         if mode not in ("rings", "bars", "line", "none"):
             raise BadRequest("Glyph style must be rings, bars, line or none.")
         cfg["glyph"]["mode"] = mode
         cfg["twitch"]["enabled"] = bool(d.get("twitch", cfg["twitch"]["enabled"]))
         if d.get("clip_seconds") is not None:
-            try:
-                seconds = float(d["clip_seconds"])
-            except (TypeError, ValueError):
-                raise BadRequest("Clip length must be a number of seconds.")
+            seconds = self._number(d["clip_seconds"], "Clip length")
             if not 0.5 <= seconds <= 120:
                 raise BadRequest("Clip length must be between 0.5 and 120 seconds.")
             cfg["audio"]["clip_seconds"] = seconds
         return cfg
 
+    @staticmethod
+    def _number(value, what: str) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise BadRequest(f"{what} must be a number.")
+        if not math.isfinite(number):
+            raise BadRequest(f"{what} must be a real number.")
+        return number
+
+    def _crop(self, d: dict) -> dict:
+        crop = d.get("crop") or {}
+        if not isinstance(crop, dict):
+            raise BadRequest("The crop wasn't understood. Try Reset under the photo.")
+        out = {"zoom": self._number(crop.get("zoom", 1.0), "Zoom"),
+               "cx": self._number(crop.get("cx", 0.5), "The crop position"),
+               "cy": self._number(crop.get("cy", 0.5), "The crop position")}
+        out["zoom"] = min(max(out["zoom"], 1.0), 10.0)
+        out["cx"] = min(max(out["cx"], 0.0), 1.0)
+        out["cy"] = min(max(out["cy"], 0.0), 1.0)
+        return out
+
     def _scene(self, d: dict, cfg: dict, fmt: str) -> Scene:
         photo_token = d.get("photo")
-        crop = d.get("crop") or {}
+        crop = self._crop(d)
         artist = str(d.get("artist", ""))
         episode = str(d.get("episode", "")).strip() or "00.00"
         key = json.dumps([photo_token, crop, artist, episode, fmt, cfg], sort_keys=True)
@@ -210,21 +298,40 @@ class DiveInService:
         return self._scenes.get_or(key, lambda: Scene(cfg, photo, artist, episode,
                                                       crop=crop, fmt=fmt))
 
-    @staticmethod
-    def _starts(d: dict) -> list[float]:
+    def _starts(self, d: dict) -> list[float]:
         raw = d.get("starts", "")
         parts = raw if isinstance(raw, list) else re.split(r"[,\n;]+", str(raw))
         parts = [str(p).strip() for p in parts if str(p).strip()]
         if not parts:
             raise BadRequest("Add at least one clip start time, like 45:10.")
+        length = self._audio_length(d.get("audio")) if d.get("audio") else None
         out = []
         for p in parts:
             try:
-                out.append(gv.parse_timecode(p))
+                # A leading minus is refused outright: "-0:05" would otherwise
+                # read as 5 seconds, because "-0" times 60 is still 0.
+                seconds = float("nan") if p.startswith("-") else gv.parse_timecode(p)
             except gv.RenderError:
-                raise BadRequest(f"Couldn't read the start time {p!r}. Use mm:ss "
-                                 f"or h:mm:ss.")
+                seconds = float("nan")
+            if not math.isfinite(seconds) or seconds < 0:
+                raise BadRequest(f"Couldn't read the start time {p!r}. Use mm:ss or h:mm:ss.")
+            if length is not None and seconds >= length:
+                raise BadRequest(f"The start time {p} is after the end of the mix "
+                                 f"(it's {self._clock(length)} long).")
+            out.append(seconds)
         return out
+
+    @staticmethod
+    def _clock(seconds: float) -> str:
+        s = int(seconds)
+        return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 \
+            else f"{s // 60}:{s % 60:02d}"
+
+    def _audio_length(self, token) -> float:
+        path = self._resolve(token, "audio file")
+        if token not in self._durations:
+            self._durations[token] = self._duration(path)
+        return self._durations[token]
 
     def _analysis(self, d: dict, cfg: dict, start: float, seconds: float):
         audio = self._resolve(d.get("audio"), "audio file")
@@ -239,29 +346,51 @@ class DiveInService:
         return self._audio.get_or(key, make)
 
     # ── the live still ───────────────────────────────────────────────────
-    def _still(self, d: dict) -> bytes:
+    def _still(self, d: dict):
+        """
+        The live preview picture: (jpeg bytes, warning) — or None if a newer
+        request arrived first. While dragging, only the newest picture matters,
+        so older requests are dropped rather than drawn, and only one is drawn
+        at a time.
+        """
+        seq = d.get("seq")
+        seq = int(self._number(seq, "seq")) if seq is not None else None
+        if seq is not None:
+            with self._still_lock:
+                if seq < self._latest_still:
+                    return None
+                self._latest_still = seq
+        with self._still_lock:
+            if seq is not None and seq < self._latest_still:
+                return None
+            return self._draw_still(d)
+
+    def _draw_still(self, d: dict):
         cfg = self._config(d)
         fmt = "square" if d.get("format") == "square" else "portrait"
         scene = self._scene(d, cfg, fmt)
         analysis, frame = None, 0
         if d.get("audio") and d.get("time") is not None and fmt == "portrait":
+            time = self._number(d["time"], "The preview time")
             start = self._starts(d)[0]
             seconds = cfg["audio"]["clip_seconds"]
             try:
                 _, analysis = self._analysis(d, cfg, start, seconds)
             except ValueError as exc:
                 raise BadRequest(str(exc))
-            frame = int(max(0.0, min(float(d["time"]), seconds)) * cfg["canvas"]["fps"])
+            frame = frame_at(time, cfg["canvas"]["fps"], seconds)
         img = scene.frame(frame, analysis, debug=bool(d.get("debug")))
-        import io
         buffer = io.BytesIO()
         img.save(buffer, "JPEG", quality=88)
-        return buffer.getvalue()
+        lacking = missing_glyphs(str(d.get("artist", "")) + str(d.get("episode", "")), cfg)
+        warning = ("Squid Boy has no letter for: " + " ".join(lacking)
+                   + " — it won't appear.") if lacking else ""
+        return buffer.getvalue(), warning
 
     # ── preview and export jobs ──────────────────────────────────────────
     def _filename(self, d: dict, suffix: str) -> str:
         episode = str(d.get("episode", "")).strip() or "00.00"
-        artist = " ".join(str(d.get("artist", "")).split()).title() or "Untitled"
+        artist = " ".join(str(d.get("artist", "")).split()) or "Untitled"
         return gv.sanitise_filename(f"Dive In {episode} - {artist}{suffix}")
 
     def _start(self, d: dict, preview: bool):
@@ -292,7 +421,10 @@ class DiveInService:
             steps = len(starts) + 1
             for i, start in enumerate(starts):
                 progress(i / steps, f"Analysing clip {i + 1} of {len(starts)}")
-                samples, analysis = self._analysis(d, cfg, start, seconds)
+                try:
+                    samples, analysis = self._analysis(d, cfg, start, seconds)
+                except ValueError as exc:
+                    raise ValueError(f"Clip {i + 1} ({self._clock(start)}): {exc}")
                 suffix = f" - {i + 1}.mp4" if len(starts) > 1 else ".mp4"
                 out = os.path.join(folder, self._filename(d, suffix))
                 render_video(scene, analysis, samples, cfg["audio"]["sample_rate"], out,
@@ -319,7 +451,9 @@ class DiveInService:
         data["files"] = [{"name": os.path.basename(p),
                           "url": f"/api/divein/jobs/{job.id}/files/{i}",
                           "size": os.path.getsize(p) if os.path.exists(p) else 0}
-                         for i, p in enumerate(files)] if job.status == "done" else []
+                         for i, p in enumerate(files)] if job.status in ("done", "error") else []
+        if data.get("error"):
+            data["error"] = _scrub_paths(data["error"])
         return data
 
     def _job_route(self, h, rest: str):
@@ -329,11 +463,13 @@ class DiveInService:
             return h._error(404, "No such job.")
         if not tail:
             return h._json(200, self._job_payload(job))
-        if job.status != "done":
+        if job.status not in ("done", "error"):
             return h._error(409, "That isn't finished yet.")
         try:
             path = self._files[job.id][int(tail)]
         except (ValueError, IndexError):
             return h._error(404, "No such file.")
         kind = "image/jpeg" if path.endswith(".jpg") else "video/mp4"
-        return h._send_file(path, kind, os.path.basename(path))
+        # The download header only allows plain ASCII; the page's own
+        # download link carries the real name, curly quotes and all.
+        return h._send_file(path, kind, _ascii_name(os.path.basename(path)))

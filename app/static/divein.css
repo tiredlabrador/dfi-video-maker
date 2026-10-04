@@ -69,3 +69,9 @@ input[type=range] { accent-color: var(--accent); }
 .field label.check { display: flex; color: var(--text); font-size: .85rem; }
 .segmented button { white-space: nowrap; }
 .field .check input { width: auto; }
+
+.warning {
+  margin-top: 1rem; padding: .65rem .9rem; font-size: .85rem;
+  color: var(--accent); background: rgba(255,225,77,.07);
+  border: 1px solid rgba(255,225,77,.3); border-radius: 9px;
+}

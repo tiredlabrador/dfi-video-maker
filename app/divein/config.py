@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import math
+import re
 
 import numpy as np
 
@@ -89,6 +91,9 @@ DEFAULTS: dict = {
         # ahead). Filters out bass notes, which share the kick's frequency band
         # but hit softer.
         "kick_relative": 0.7, "kick_window_s": 3.0, "kick_lookahead_s": 0.6,
+        # How sharp the attack must be: the rise over ~12ms as a fraction of
+        # the level it reaches. Stops held bass notes counting as kicks.
+        "kick_min_rise": 0.25,
     },
 
     # The ghost "stutter" on each kick.
@@ -141,13 +146,106 @@ def _merge(base: dict, override: dict, path: str) -> dict:
     return out
 
 
+# Sensible limits. Outside these the renderer would crash, hang or eat memory,
+# so the setting is refused with its name instead.
+RANGES = {
+    "canvas.width": (64, 4096), "canvas.height": (64, 4096), "canvas.fps": (1, 120),
+    "photo.contrast": (0, 5), "photo.brightness": (0, 5),
+    "ghost.offset_x": (-200, 200), "ghost.offset_y": (-200, 200),
+    "ghost.contrast": (0, 5), "ghost.brightness": (0, 5), "ghost.blur": (0, 50),
+    "ghost.opacity": (0, 1),
+    "grain.sd": (0, 128), "grain.opacity": (0, 1), "grain.every_frames": (1, 30),
+    "grain.pool": (2, 64),
+    "vignette.centre_x": (0, 1), "vignette.centre_y": (0, 1),
+    "vignette.inner": (0, 0.99), "vignette.edge_alpha": (0, 1),
+    "logo.width": (1, 2000),
+    "tape.thickness": (1, 1000), "tape.font_size": (4, 400), "tape.angle": (-89, 89),
+    "tape.texture_mix": (0, 1), "tape.texture_grey": (0, 1), "tape.texture_grain": (0, 4),
+    "name.font_size": (8, 400), "name.min_font_size": (8, 400),
+    "name.max_width": (50, 4000), "name.line_gap": (0, 1000),
+    "glyph.box_width": (1, 2000), "glyph.box_height": (1, 2000), "glyph.scale": (0.1, 10),
+    "glyph.rings.count": (1, 12), "glyph.rings.points": (8, 1000),
+    "glyph.rings.rx": (1, 1000), "glyph.rings.ry": (0.5, 1000),
+    "glyph.rings.stroke": (0.5, 50), "glyph.rings.radial_sd": (0, 20),
+    "glyph.rings.radial_smooth": (1, 20), "glyph.rings.vertical_sd": (0, 20),
+    "glyph.bars.count": (1, 8), "glyph.bars.bar_width": (1, 200),
+    "glyph.bars.spacing": (0, 200), "glyph.bars.min_height": (0, 1000),
+    "glyph.bars.max_height": (1, 1000), "glyph.bars.corner": (0, 100),
+    "glyph.line.width": (1, 2000), "glyph.line.max_amplitude": (0, 1000),
+    "glyph.line.window_ms": (1, 1000), "glyph.line.smooth": (1, 50),
+    "glyph.line.stroke": (0.5, 50), "glyph.line.min_scale": (0, 1),
+    "glyph.glow.blur": (0, 50), "glyph.glow.peak_blur": (0, 50),
+    "glyph.glow.alpha": (0, 1), "glyph.glow.peak_alpha": (0, 1),
+    "audio.clip_seconds": (0.5, 120), "audio.sample_rate": (8000, 192000),
+    "audio.rms_low_pct": (0, 100), "audio.rms_high_pct": (0, 100),
+    "audio.silence_db": (-200, 0), "audio.attack_frames": (1, 60),
+    "audio.release_ms": (1, 5000), "audio.kick_low_hz": (10, 1000),
+    "audio.kick_high_hz": (10, 2000), "audio.kick_sensitivity": (0, 10),
+    "audio.kick_min_interval_ms": (50, 2000), "audio.kick_floor": (0, 1),
+    "audio.kick_relative": (0, 2), "audio.kick_window_s": (0.1, 30),
+    "audio.kick_lookahead_s": (0, 5), "audio.kick_min_rise": (0, 1),
+    "twitch.min_px": (0, 100), "twitch.max_px": (0, 100), "twitch.release_ms": (1, 2000),
+    "square.size": (64, 4096), "square.jpg_quality": (1, 100),
+    "export.crf": (0, 51), "export.max_mbps": (0.5, 200),
+    "export.preview_seconds": (0.5, 120), "export.preview_width": (64, 4096),
+}
+PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium",
+           "slow", "slower", "veryslow")
+
+
+def _get(cfg: dict, dotted: str):
+    value = cfg
+    for part in dotted.split("."):
+        value = value[part]
+    return value
+
+
+def validate(cfg: dict) -> dict:
+    """Refuse values the renderer can't work with, naming the setting."""
+    for path, (lo, hi) in RANGES.items():
+        value = _get(cfg, path)
+        if not math.isfinite(value) or not lo <= value <= hi:
+            raise ConfigError(f"{path} must be between {lo} and {hi} (it's {value}).")
+    for path in ("canvas.width", "canvas.height", "square.size", "export.preview_width"):
+        if int(_get(cfg, path)) % 2:
+            raise ConfigError(f"{path} must be an even number (video needs that).")
+    for name, value in cfg["colours"].items():
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+            raise ConfigError(f"colours.{name} must look like #fffe01.")
+    if not cfg["tape"]["text"].strip():
+        raise ConfigError("tape.text can't be empty.")
+    a = cfg["audio"]
+    order = ["gap_silence", "gap_low", "gap_rest", "gap_loud", "gap_kick"]
+    values = [a[k] for k in order]
+    if any(not 0 <= v <= 200 for v in values) or values != sorted(values):
+        raise ConfigError("The audio gap values must rise in order: "
+                          "gap_silence ≤ gap_low ≤ gap_rest ≤ gap_loud ≤ gap_kick.")
+    if a["rms_low_pct"] >= a["rms_high_pct"]:
+        raise ConfigError("audio.rms_low_pct must be below audio.rms_high_pct.")
+    if a["kick_low_hz"] >= a["kick_high_hz"]:
+        raise ConfigError("audio.kick_low_hz must be below audio.kick_high_hz.")
+    if cfg["twitch"]["min_px"] > cfg["twitch"]["max_px"]:
+        raise ConfigError("twitch.min_px must not be more than twitch.max_px.")
+    bars = cfg["glyph"]["bars"]
+    if len(bars["rest_heights"]) != int(bars["count"]):
+        raise ConfigError(f"glyph.bars.rest_heights needs one value per bar "
+                          f"({int(bars['count'])}).")
+    if bars["min_height"] > bars["max_height"]:
+        raise ConfigError("glyph.bars.min_height must not be more than max_height.")
+    if cfg["export"]["preset"] not in PRESETS:
+        raise ConfigError(f"export.preset must be one of: {', '.join(PRESETS)}.")
+    if cfg["glyph"]["mode"] not in ("rings", "bars", "line", "none"):
+        raise ConfigError("glyph.mode must be rings, bars, line or none.")
+    return cfg
+
+
 def merge_config(overrides: dict | None) -> dict:
-    """The defaults with `overrides` laid over them. Never mutates DEFAULTS."""
+    """The defaults with `overrides` laid over them, checked. Never mutates DEFAULTS."""
     if not overrides:
         return copy.deepcopy(DEFAULTS)
     if not isinstance(overrides, dict):
         raise ConfigError("Settings overrides must be a JSON object.")
-    return _merge(DEFAULTS, overrides, "")
+    return validate(_merge(DEFAULTS, overrides, ""))
 
 
 # ── seeded randomness ────────────────────────────────────────────────────

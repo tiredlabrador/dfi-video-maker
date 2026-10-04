@@ -27,6 +27,11 @@ function setError(message) {
   show($('error'), Boolean(message));
 }
 
+function setWarning(message) {
+  $('warning').textContent = message || '';
+  show($('warning'), Boolean(message));
+}
+
 function timecode(seconds) {
   const s = Math.floor(seconds % 60), m = Math.floor(seconds / 60) % 60;
   const h = Math.floor(seconds / 3600);
@@ -111,7 +116,7 @@ async function refreshStill() {
   stillController = new AbortController();
   show($('busy'), true);
 
-  const extra = { format: state.format };
+  const extra = { format: state.format, seq };
   if ($('scrub-on').checked && state.audio && state.format === 'portrait') {
     extra.time = Number($('scrub').value);
   }
@@ -120,12 +125,15 @@ async function refreshStill() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(design(extra)), signal: stillController.signal,
     });
+    if (response.status === 204) return;         // superseded by a newer request
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.error || 'The preview could not be drawn.');
     }
+    const warning = decodeURIComponent(response.headers.get('X-Divein-Warning') || '');
     const blob = await response.blob();
     if (seq !== stillSeq) return;               // a newer one is on its way
+    setWarning(warning);
     const img = $('still');
     const old = img.src;
     img.src = URL.createObjectURL(blob);
@@ -146,7 +154,9 @@ async function refreshStill() {
 async function upload(kind, file) {
   const response = await fetch(`/api/divein/upload?kind=${kind}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': file.name },
+    // Encoded: browsers refuse header text beyond Latin-1 ("Dom’s mix.mp3").
+    headers: { 'Content-Type': 'application/octet-stream',
+               'X-Filename': encodeURIComponent(file.name) },
     body: file,
   });
   const payload = await response.json().catch(() => ({}));
@@ -289,7 +299,11 @@ async function startJob(kind) {
       clearInterval(state.polling);
       setBusy(false);
       show($('progress'), false);
-      if (s.status === 'error') { setError(s.error || 'That failed.'); return; }
+      if (s.status === 'error') {
+        setError(s.error || 'That failed.');
+        if (s.files && s.files.length) showFiles(s.files, kind);   // keep what finished
+        return;
+      }
       showFiles(s.files, kind);
     }
   }, 400);
@@ -386,7 +400,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('twitch').addEventListener('change', () => { save(); if ($('scrub-on').checked) scheduleStill(0); });
   $('debug').addEventListener('change', () => scheduleStill(0));
   $('zoom').addEventListener('input', () => {
-    state.crop.zoom = Number($('zoom').value); clampCrop(); scheduleStill(60);
+    state.crop.zoom = Number($('zoom').value) || 1; clampCrop(); scheduleStill(60);
   });
   $('reset-crop').addEventListener('click', () => { resetCrop(); scheduleStill(0); });
   wireSegment('glyph-choice', (v) => { state.glyph = v; scheduleStill(0); });

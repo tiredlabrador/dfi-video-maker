@@ -142,8 +142,9 @@ def test_the_still_can_show_a_moment_in_the_audio(server, media):
     mix, photo = media
     p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
     a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    # Debug stays off in both, so any difference comes from the audio moment.
     rest = post_json(server, "/api/divein/still", design(p), raw=True).read()
-    moment = post_json(server, "/api/divein/still", design(p, a, time=0.5, debug=True),
+    moment = post_json(server, "/api/divein/still", design(p, a, time=0.5),
                        raw=True).read()
     assert rest != moment
 
@@ -211,13 +212,14 @@ def test_a_start_time_that_cannot_be_read_is_refused_before_rendering(server, me
 
 
 def test_a_start_after_the_end_of_the_mix_fails_with_a_readable_message(server, media):
+    """Refused before rendering (it used to fail partway through the job)."""
     mix, photo = media
     p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
     a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
-    job = post_json(server, "/api/divein/export", design(p, a, starts="5:00"))
-    done = wait(server, job["id"])
-    assert done["status"] == "error"
-    assert "after the end" in done["error"]
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        post_json(server, "/api/divein/export", design(p, a, starts="5:00"))
+    assert caught.value.code == 400
+    assert "after the end" in caught.value.read().decode()
 
 
 def test_export_without_audio_is_refused(server, media):
@@ -242,3 +244,132 @@ def test_another_website_cannot_use_the_dive_in_routes(server):
     with pytest.raises(urllib.error.HTTPError) as caught:
         urllib.request.urlopen(req, timeout=10)
     assert caught.value.code == 403
+
+
+# ── found in review ─────────────────────────────────────────────────────
+def test_a_name_with_curly_quotes_or_polish_letters_still_downloads(server, media):
+    """
+    The filename went raw into a header that only allows Latin-1, so the
+    download connection died. ’, –, Ł and emoji all triggered it.
+    """
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    job = post_json(server, "/api/divein/preview",
+                    design(p, a, artist="Mike’s Müller – DJ 😀",
+                           overrides={"export": {"preview_seconds": 1}}))
+    done = wait(server, job["id"])
+    assert done["status"] == "done", done.get("error")
+    f = done["files"][0]
+    assert "Mike’s Müller – DJ 😀" in f["name"], "the name is kept as typed"
+    assert get(server, f["url"]).read()[4:8] == b"ftyp"
+
+
+def test_an_upload_name_with_curly_quotes_arrives_intact(server, media):
+    """The page sends the name percent-encoded, since browsers refuse others."""
+    _, photo = media
+    from urllib.parse import quote
+    info = raw_upload(server, "photo", quote("Dom’s photo.jpg"), photo)
+    assert info["name"] == "Dom’s photo.jpg"
+
+
+@pytest.mark.parametrize("bad", [
+    {"crop": {"zoom": None, "cx": 0.5, "cy": 0.5}},
+    {"crop": [1, 2, 3]},
+    {"time": "abc"},
+    {"overrides": {"tape": {"text": ""}}},
+    {"overrides": {"glyph": {"rings": {"count": 0}}}},
+    {"overrides": {"glyph": {"bars": {"count": 0}}}},
+    {"overrides": {"colours": {"yellow": "yellow"}}},
+    {"overrides": {"canvas": {"width": 0}}},
+    {"overrides": {"canvas": {"fps": 0}}},
+    {"overrides": {"grain": {"pool": 1000}}},
+])
+def test_bad_values_get_a_plain_answer_not_a_dropped_connection(server, media, bad):
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    body = design(p, a, **({} if "time" not in bad else {}))
+    body.update(bad)
+    if "time" not in body:
+        body["time"] = 1.0
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        post_json(server, "/api/divein/still", body, raw=True)
+    assert caught.value.code == 400
+    message = json.loads(caught.value.read())["error"]
+    assert message and "Traceback" not in message and "/private/" not in message
+
+
+def test_an_unexpected_failure_still_gets_an_answer(server, media, monkeypatch):
+    """Anything unforeseen comes back as a 500 with a message, never silence."""
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    import app.divein.api as api
+    def boom(*a, **k):
+        raise RuntimeError("something odd")
+    monkeypatch.setattr(api.Scene, "frame", boom)
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        post_json(server, "/api/divein/still", design(p), raw=True)
+    assert caught.value.code == 500
+    assert "something odd" in json.loads(caught.value.read())["error"]
+
+
+def test_tuning_cannot_silently_fight_the_page_controls(server, media):
+    """Glyph style, twitch and clip length are set by the page; say so."""
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        post_json(server, "/api/divein/still",
+                  design(p, overrides={"glyph": {"mode": "bars"}}), raw=True)
+    assert caught.value.code == 400
+    assert "Style" in caught.value.read().decode()
+
+
+def test_a_start_time_past_the_end_is_refused_before_anything_renders(server, media):
+    """
+    Previously the export rendered the good clips, hit the bad one, failed,
+    and offered nothing. Now it's caught up front and named.
+    """
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        post_json(server, "/api/divein/export", design(p, a, starts="0:02, 0:05, 9:00"))
+    assert caught.value.code == 400
+    assert "9:00" in caught.value.read().decode()
+
+
+@pytest.mark.parametrize("bad", ["inf", "nan", "-0:05"])
+def test_nonsense_start_times_are_refused(server, media, bad):
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        post_json(server, "/api/divein/export", design(p, a, starts=bad))
+    assert caught.value.code == 400
+
+
+def test_scrubbing_to_a_time_shows_that_exact_frame(server, media):
+    """The slider steps in 1/30s; 4.0333s must be frame 121, not 120."""
+    from app.divein.api import frame_at
+    assert frame_at(4.0333, 30, 25.0) == 121
+    assert frame_at(0.0333, 30, 25.0) == 1
+    assert frame_at(30.0, 30, 25.0) == 749
+
+
+def test_the_still_warns_about_letters_the_font_lacks(server, media):
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    response = post_json(server, "/api/divein/still", design(p, artist="Жора"), raw=True)
+    from urllib.parse import unquote
+    assert "Ж" in unquote(response.headers.get("X-Divein-Warning", ""))
+
+
+def test_a_stale_still_request_is_skipped(server, media):
+    """While dragging, only the newest picture matters; older ones are dropped."""
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    newer = post_json(server, "/api/divein/still", design(p, seq=10), raw=True)
+    assert newer.status == 200
+    older = post_json(server, "/api/divein/still", design(p, seq=9), raw=True)
+    assert older.status == 204

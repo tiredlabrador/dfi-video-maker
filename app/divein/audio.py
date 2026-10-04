@@ -32,8 +32,10 @@ def decode_excerpt(path: str, start: float, seconds: float,
                "-f", "f32le", "-ac", "2", "-ar", str(sample_rate), "pipe:1"]
     result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
-        raise ValueError("That audio file couldn't be read: "
-                         + result.stderr.decode(errors="replace").strip()[-300:])
+        # The technical detail goes to the Terminal window; the person gets a
+        # sentence (ffmpeg's own message includes private file paths).
+        print("ffmpeg could not decode:", result.stderr.decode(errors="replace").strip()[-500:])
+        raise ValueError("That audio file couldn't be read at that start time.")
     samples = np.frombuffer(result.stdout, dtype=np.float32).reshape(-1, 2)
     if samples.shape[0] == 0:
         raise ValueError("That clip start is after the end of the mix.")
@@ -130,7 +132,12 @@ def _detect_kicks(mono: np.ndarray, sr: int, fps: int, n_frames: int,
     windows = np.lib.stride_tricks.sliding_window_view(padded, 2 * span + 1)
     threshold = windows.mean(axis=1) + a["kick_sensitivity"] * windows.std(axis=1)
 
-    candidates = np.nonzero((onset > threshold) & (env > a["kick_floor"]))[0]
+    # A kick is a sudden jump: the rise must be a real share of the level it
+    # reaches. A held bass note's envelope wobbles by a hair, which a purely
+    # relative threshold would otherwise count, pumping the coil through a
+    # breakdown.
+    rising = onset >= a["kick_min_rise"] * np.maximum(env, 1e-9)
+    candidates = np.nonzero((onset > threshold) & (env > a["kick_floor"]) & rising)[0]
 
     # Bass notes share the kick's frequency band. What separates them is how
     # loud they peak: on real tracks, kicks land about twice as loud. So each
@@ -156,12 +163,44 @@ def _detect_kicks(mono: np.ndarray, sr: int, fps: int, n_frames: int,
         if all(abs(i - j) >= min_gap for j in accepted):
             accepted.append(i)
 
+    outline = _envelope(low) if accepted else low
     for i in accepted:
-        seconds = (i * hop + win / 2) / sr
-        frame = int(seconds * fps)
+        frame = int(round(_attack_start(outline, i, hop, win, sr) * fps))
         if 0 <= frame < n_frames:
             kicks[frame] = True
     return kicks
+
+
+def _envelope(signal: np.ndarray) -> np.ndarray:
+    """The smooth outline of a wave (its Hilbert envelope), without its ripples."""
+    n = signal.size
+    spectrum = np.fft.fft(signal)
+    h = np.zeros(n)
+    h[0] = 1
+    if n % 2 == 0:
+        h[n // 2] = 1
+        h[1:n // 2] = 2
+    else:
+        h[1:(n + 1) // 2] = 2
+    return np.abs(np.fft.ifft(spectrum * h))
+
+
+def _attack_start(outline: np.ndarray, i: int, hop: int, win: int, sr: int) -> float:
+    """
+    When the hit actually began, in seconds.
+
+    The detector notices a kick a little after it starts (about 18ms on
+    average), so look back along the low band's outline for where it first
+    reaches half its peak. Measured on synthetic kicks, that lands within
+    about a millisecond of the true start.
+    """
+    a = max(0, (i - 6) * hop)
+    b = min(outline.size, i * hop + win)
+    seg = outline[a:b]
+    if seg.size == 0 or seg.max() <= 0:
+        return (i * hop + win / 2) / sr
+    first = int(np.argmax(seg >= 0.5 * seg.max()))
+    return (a + first) / sr
 
 
 def _bands(mono: np.ndarray, sr: int, fps: int, n_frames: int, count: int,

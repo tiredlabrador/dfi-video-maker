@@ -196,15 +196,17 @@ def test_smoothing_jumps_up_at_once_and_falls_slowly():
 
 # ── decoding ────────────────────────────────────────────────────────────
 def test_decoding_cuts_out_exactly_the_requested_excerpt(tmp_path):
-    path = tmp_path / "mix.wav"
-    gv.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-            "-i", "sine=frequency=440:duration=12", "-ac", "2", "-ar", "44100",
-            str(path)], "test mix")
+    """A sweep, so audio from the wrong place can't pass for the right place."""
+    path = tmp_path / "sweep.wav"
+    t = np.arange(12 * SR) / SR
+    sweep = 0.5 * np.sin(2 * np.pi * (100 * t + 40 * t * t))
+    from app.divein.render import write_wav
+    write_wav(np.stack([sweep, sweep], 1).astype(np.float32), SR, str(path))
     samples = decode_excerpt(str(path), start=3.0, seconds=5.0, sample_rate=SR)
     assert samples.shape == (5 * SR, 2)
     assert samples.dtype == np.float32
-    # ffmpeg's test tone peaks at 1/8 full scale; this only proves "not silence".
-    assert np.abs(samples).max() > 0.05
+    expected = sweep[3 * SR: 8 * SR]
+    assert np.abs(samples[:, 0] - expected).max() < 0.01
 
 
 def test_an_excerpt_running_past_the_end_is_padded_with_silence(tmp_path):
@@ -255,3 +257,33 @@ def test_quieter_kicks_in_a_quieter_section_still_count(cfg):
     found = np.nonzero(result["kick"])[0]
     early = [f for f in found if f < 6 * FPS - 10]
     assert len(early) >= len([x for x in times if x < 5.7]) - 1
+
+
+def test_a_held_bass_note_is_not_a_stream_of_kicks(cfg):
+    """
+    Found in review: after the drums stop, a sustained bass note fired a
+    kick every few frames, pumping the coil through a breakdown.
+    """
+    samples, times = beat(4.0, hats=False)
+    t = np.arange(4 * SR) / SR
+    held = (0.5 * np.sin(2 * np.pi * 50 * t)).astype(np.float32)
+    samples = np.concatenate([samples, np.stack([held, held], 1)])
+    result = analyse(samples, SR, FPS, cfg, episode="02.01")
+    late = np.nonzero(result["kick"][4 * FPS + 6:])[0]
+    assert late.size == 0, late
+
+
+def test_a_steady_low_tone_has_no_kicks_at_all(cfg):
+    t = np.arange(5 * SR) / SR
+    tone = (0.5 * np.sin(2 * np.pi * 60 * t)).astype(np.float32)
+    result = analyse(np.stack([tone, tone], 1), SR, FPS, cfg, episode="02.01")
+    assert result["kick"].sum() == 0
+
+
+@pytest.mark.parametrize("offset", [0.0, 0.008, 0.016, 0.024, 0.031])
+def test_a_kick_lands_on_the_nearest_frame(cfg, offset):
+    """Wherever within a frame the kick falls, it's drawn on the closest frame."""
+    times = [1.0 + offset, 2.0 + offset, 3.0 + offset]
+    samples, _ = beat(4.0, kicks_at=times, hats=False)
+    found = list(np.nonzero(analyse(samples, SR, FPS, cfg, episode="02.01")["kick"])[0])
+    assert found == [int(round(x * FPS)) for x in times]

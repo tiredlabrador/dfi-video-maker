@@ -98,14 +98,25 @@ def test_the_square_still_is_a_1080_jpg(setup, tmp_path):
     assert img.format == "JPEG" and img.size == (1080, 1080)
 
 
-def test_grain_does_not_balloon_the_file_size(setup):
+def test_grain_does_not_balloon_the_file_size(tmp_path):
     """
     Grain that changes every two frames is nearly incompressible: uncapped, a
     25s clip came out at ~126MB. The bitrate is capped (16 Mbit/s keeps ~95% of
     the grain) so files stay a sensible size.
+
+    The encoder may burst by up to its buffer (2x the cap) at the start, so the
+    average over a clip of S seconds can be at most cap + 2*cap/S. Uncapped,
+    this same clip runs at ~35 Mbit/s, well above that line.
     """
-    cfg, scene, samples, analysis, tmp = setup
-    out = tmp / "capped.mp4"
-    render_video(scene, analysis, samples, SR, str(out), cfg, seconds=2.0)
+    cfg = merge_config({})
+    photo = tmp_path / "p.jpg"
+    y, x = np.mgrid[0:900, 0:700]
+    Image.fromarray(((x + y) % 256).astype(np.uint8)).convert("RGB").save(photo)
+    samples, _ = beat(4.0)
+    analysis = analyse(samples, SR, FPS, cfg, episode="02.01")
+    scene = Scene(cfg, load_photo(str(photo)), "Artist\nName", "02.01")
+    out = tmp_path / "capped.mp4"
+    render_video(scene, analysis, samples, SR, str(out), cfg, seconds=4.0)
     v, _, _ = probe(out)
-    assert int(v["bit_rate"]) <= cfg["export"]["max_mbps"] * 1_000_000 * 1.15
+    cap = cfg["export"]["max_mbps"] * 1_000_000
+    assert int(v["bit_rate"]) <= (cap + 2 * cap / 4.0) * 1.05

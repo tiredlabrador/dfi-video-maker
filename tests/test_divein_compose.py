@@ -168,11 +168,31 @@ def test_a_long_name_wraps_onto_two_balanced_lines(cfg):
 def test_a_name_too_long_for_two_lines_shrinks_rather_than_overflowing(cfg):
     from PIL import ImageFont
     from app.divein.compose import font_path
-    lines, size = layout_name("Supercalifragilisticexpialidocious", cfg)
-    assert size < 152 and size >= cfg["name"]["min_font_size"]
-    font = ImageFont.truetype(font_path(cfg["name"]["font"]), size)
-    assert all(font.getlength(l) <= cfg["name"]["max_width"] for l in lines) \
-        or size == cfg["name"]["min_font_size"]
+    for name in ("Supercalifragilisticexpialidocious",
+                 "Kerri Chandler & Jerome Sydenham presents Ibadan"):
+        lines, size = layout_name(name, cfg)
+        assert size < 152
+        font = ImageFont.truetype(font_path(cfg["name"]["font"]), size)
+        assert all(font.getlength(l) <= cfg["name"]["max_width"] for l in lines), name
+
+
+def test_a_long_name_never_runs_off_the_canvas(cfg, black_photo):
+    arr = np.asarray(scene(cfg, black_photo, artist="Supercalifragilisticexpialidocious")
+                     .frame(0)).astype(int)
+    white = arr[950:1350].min(axis=2) > 200
+    cols = np.nonzero(white.any(axis=0))[0]
+    assert cols.max() <= 1080 - 40
+
+
+def test_letters_the_font_lacks_are_reported(cfg):
+    """
+    Squid Boy V4 covers Western European letters and punctuation, but not
+    Cyrillic, emoji, or most Central/Eastern European letters such as Ł.
+    Those would silently vanish from the picture, so they're reported.
+    """
+    from app.divein.compose import missing_glyphs
+    assert missing_glyphs("Ezra Müller’s – Mix & Ñoño", cfg) == []
+    assert set(missing_glyphs("Жора 😀 Łukasz", cfg)) >= {"Ж", "😀", "Ł"}
 
 
 def test_more_than_two_manual_lines_are_folded_into_two(cfg):
@@ -205,6 +225,28 @@ def test_grain_changes_every_second_frame(cfg, grey_photo):
     f0, f1, f2 = (np.asarray(s.frame(i))[300:500, 300:500] for i in (0, 1, 2))
     assert np.array_equal(f0, f1)
     assert not np.array_equal(f0, f2)
+
+
+@pytest.mark.parametrize("episode", ["02.01", "03.10", "01.01"])
+def test_grain_never_holds_for_more_than_two_frames(cfg, grey_photo, episode):
+    """Checked over two minutes of frames, not just the first few."""
+    s = scene(cfg, grey_photo, episode=episode)
+    picks = [s.grain_index(f) for f in range(0, 3600, 2)]
+    assert all(a != b for a, b in zip(picks, picks[1:]))
+
+
+def test_frames_are_identical_however_the_cache_was_warmed(cfg, colourful_photo):
+    """
+    The export must not depend on what the live preview happened to draw first.
+    A scene warmed out of order (including twitch frames) must match a fresh one.
+    """
+    a = fake_analysis()
+    warm = scene(cfg, colourful_photo)
+    for f in (60, 30, 31, 2, 88, 45):
+        warm.frame(f, a)
+    fresh = scene(cfg, colourful_photo)
+    for f in (0, 30, 31, 45, 60, 88):
+        assert np.array_equal(np.asarray(warm.frame(f, a)), np.asarray(fresh.frame(f, a))), f
 
 
 def test_grain_is_film_like_not_flat(cfg, grey_photo):
@@ -290,3 +332,10 @@ def test_the_debug_overlay_shows_up_only_when_asked(cfg, black_photo):
     on = np.asarray(s.frame(30, a, debug=True))
     assert not np.array_equal(off, on)
     assert np.array_equal(off, np.asarray(s.frame(30, a, debug=False)))
+
+
+def test_a_16_bit_photo_is_not_turned_white(tmp_path):
+    path = tmp_path / "deep.png"
+    Image.fromarray(np.full((400, 300), 32768, dtype=np.uint16)).save(path)
+    grey = np.asarray(load_photo(str(path)))
+    assert 110 <= grey.mean() <= 145
