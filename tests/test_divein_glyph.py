@@ -184,3 +184,15 @@ def test_the_line_moves_with_the_audio(cfg):
     def height(tile):
         return np.ptp(np.nonzero(np.asarray(tile)[..., 3] > 128)[0])
     assert height(loud) > height(quiet) + 15
+
+
+def test_a_louder_moment_swings_the_line_further(cfg):
+    cfg["glyph"]["mode"] = "line"
+    g = Glyph(cfg, "02.01")
+    t = np.arange(2000) / 44100
+    wave = np.sin(2 * np.pi * 150 * t)
+    quiet, _ = g.render(dict(g.rest_state(), wave=wave * 0.1, level=0.0))
+    loud, _ = g.render(dict(g.rest_state(), wave=wave * 0.1, level=1.0))
+    def height(tile):
+        return np.ptp(np.nonzero(np.asarray(tile)[..., 3] > 128)[0])
+    assert height(loud) > height(quiet) + 15

@@ -284,12 +284,13 @@ class Scene:
         return k
 
     def _grain(self, k: int) -> np.ndarray:
+        # Kept as 8-bit (a quarter of the memory); noise doesn't need more.
         if k not in self._grain_cache:
             gr = self.cfg["grain"]
             rng = rng_for(self.episode, f"grain-{self.fmt}-{k}")
-            noise = rng.normal(0.5, gr["sd"] / 255.0, (self.H, self.W)).astype(np.float32)
-            self._grain_cache[k] = np.clip(noise, 0.0, 1.0)
-        return self._grain_cache[k]
+            noise = rng.normal(128.0, gr["sd"], (self.H, self.W))
+            self._grain_cache[k] = np.clip(np.round(noise), 0, 255).astype(np.uint8)
+        return self._grain_cache[k].astype(np.float32) / 255.0
 
     # ── composition ──────────────────────────────────────────────────────
     def _background(self, k: int, twitch=(0, 0)) -> np.ndarray:
@@ -341,15 +342,13 @@ class Scene:
             return self.glyph.rest_state()
         f = min(frame, len(analysis["gap"]) - 1)
         state = {"gap": float(analysis["gap"][f]), "glow": float(analysis["glow"][f]),
-                 "bands": list(analysis["bands"][f]), "wave": None, "wave_norm": 1.0}
+                 "bands": list(analysis["bands"][f]), "wave": None,
+                 "level": float(analysis["level"][f])}
         if self.glyph.mode == "line":
             mono, sr = analysis["mono"], analysis["sample_rate"]
             end = int((f + 1) * sr / self.fps)
             span = int(self.cfg["glyph"]["line"]["window_ms"] / 1000.0 * sr)
             state["wave"] = mono[max(0, end - span):end]
-            if "_wave_norm" not in analysis:
-                analysis["_wave_norm"] = float(np.percentile(np.abs(mono), 99.5)) or 1.0
-            state["wave_norm"] = analysis["_wave_norm"]
         return state
 
     def frame(self, f: int, analysis: dict | None = None, debug: bool = False) -> Image.Image:

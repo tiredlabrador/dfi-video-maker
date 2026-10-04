@@ -131,6 +131,25 @@ def _detect_kicks(mono: np.ndarray, sr: int, fps: int, n_frames: int,
     threshold = windows.mean(axis=1) + a["kick_sensitivity"] * windows.std(axis=1)
 
     candidates = np.nonzero((onset > threshold) & (env > a["kick_floor"]))[0]
+
+    # Bass notes share the kick's frequency band. What separates them is how
+    # loud they peak: on real tracks, kicks land about twice as loud. So each
+    # hit is compared with the strong hits just before it (the upper quartile)
+    # and only those in the same league count. Comparing locally rather than
+    # across the whole clip lets a quieter section's softer kicks survive.
+    if candidates.size:
+        back = a["kick_window_s"] * sr / hop
+        ahead = a["kick_lookahead_s"] * sr / hop
+        after = max(1, int(0.035 * sr / hop))           # the hit's peak, ~35ms on
+        peak = np.array([env[i:i + after + 1].max() for i in candidates])
+        keep = []
+        for i, level in zip(candidates, peak):
+            # Mostly look back, as a listener would: a breakdown's softer kicks
+            # mustn't be judged against the drop that follows them.
+            near = peak[(candidates >= i - back) & (candidates <= i + ahead)]
+            if level >= a["kick_relative"] * np.percentile(near, 75):
+                keep.append(i)
+        candidates = np.array(keep, dtype=int)
     min_gap = a["kick_min_interval_ms"] / 1000.0 * sr / hop
     accepted: list[int] = []
     for i in sorted(candidates, key=lambda j: -onset[j]):     # strongest first

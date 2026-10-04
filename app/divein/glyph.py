@@ -76,7 +76,7 @@ class Glyph:
         """What the glyph looks like with no music: the static JPG, the preview."""
         return {"gap": self.cfg["audio"]["gap_rest"], "glow": 0.0,
                 "bands": list(self.g["bars"]["rest_heights"]), "wave": None,
-                "wave_norm": 1.0}
+                "level": 0.5}
 
     # ── drawing ──────────────────────────────────────────────────────────
     def render(self, state: dict, scale: float = 1.0, origin=None):
@@ -99,7 +99,7 @@ class Glyph:
             stroke = 0.0
             kind = "bars"
         elif self.mode == "line":
-            shapes = [self._line_points(state.get("wave"), state.get("wave_norm", 1.0))]
+            shapes = [self._line_points(state.get("wave"), state.get("level", 0.5))]
             stroke = self.g["line"]["stroke"]
             kind = "lines"
         else:
@@ -164,7 +164,14 @@ class Glyph:
             rects.append((x, b["bottom_y"] - height, x + b["bar_width"], b["bottom_y"]))
         return rects
 
-    def _line_points(self, wave, norm: float) -> np.ndarray:
+    def _line_points(self, wave, level: float) -> np.ndarray:
+        """
+        A short stretch of the actual waveform, drawn across the glyph box.
+
+        The shape is scaled to fill the box, and loudness decides how far it
+        swings — so it always reads as a waveform, but quiet passages are
+        visibly calmer than loud ones.
+        """
         ln = self.g["line"]
         n = 110
         taper = np.sin(np.linspace(0, math.pi, n)) ** 0.8   # ends meet the centre
@@ -172,15 +179,22 @@ class Glyph:
             values = self._rest_wave * ln["rest_amplitude"] / max(ln["max_amplitude"], 1e-6)
         else:
             wave = np.asarray(wave, dtype=np.float64)
-            if wave.size < 2:
+            if wave.size < 2 or not np.abs(wave).max():
                 values = np.zeros(n)
             else:
+                # Average down to n points (not just sample), then soften.
+                box = max(1, wave.size // n)
+                if box > 1:
+                    wave = np.convolve(wave, np.ones(box) / box, mode="same")
                 values = np.interp(np.linspace(0, wave.size - 1, n),
                                    np.arange(wave.size), wave)
                 k = max(1, int(ln["smooth"]))
                 if k > 1:
                     values = np.convolve(values, np.ones(k) / k, mode="same")
-                values = np.clip(values / max(norm, 1e-6), -1, 1)
+                peak = np.abs(values).max()
+                values = values / peak if peak else values
+                swing = ln["min_scale"] + (1 - ln["min_scale"]) * float(np.clip(level, 0, 1))
+                values = values * swing
         x = self.g["rings"]["centre_x"] + np.linspace(-ln["width"] / 2, ln["width"] / 2, n)
         y = ln["centre_y"] - values * taper * ln["max_amplitude"]
         return np.stack([x, y], axis=1)

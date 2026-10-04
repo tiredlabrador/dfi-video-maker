@@ -1,0 +1,71 @@
+/* Dive In test area — additions on top of the main style sheet. */
+
+a.tab { text-decoration: none; display: inline-block; }
+
+.test-note {
+  margin: 0 0 1.25rem; padding: .5rem .75rem; font-size: .8rem;
+  color: var(--accent); background: rgba(255,225,77,.07);
+  border: 1px solid rgba(255,225,77,.25); border-radius: 8px;
+}
+
+.field textarea, .tuning textarea {
+  width: 100%; padding: .55rem .7rem; font: inherit; resize: vertical;
+  color: var(--text); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.tuning textarea { font: 12px/1.5 ui-monospace, Menlo, monospace; }
+.field textarea:focus, .tuning textarea:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(255,225,77,.14);
+}
+
+.field.inline { display: flex; align-items: center; gap: .75rem; margin-top: .75rem; }
+.field.inline label { margin: 0; }
+.field.inline input[type=range] { flex: 1; }
+input[type=range] { accent-color: var(--accent); }
+
+.segmented {
+  display: flex; border: 1px solid var(--line); border-radius: 9px;
+  overflow: hidden; margin-bottom: .75rem;
+}
+.segmented button {
+  flex: 1; padding: .5rem .4rem; font: inherit; font-size: .85rem; cursor: pointer;
+  color: var(--muted); background: var(--panel-2); border: none;
+  border-right: 1px solid var(--line);
+}
+.segmented button:last-child { border-right: none; }
+.segmented button[aria-checked=true] { color: #000; background: var(--accent); font-weight: 600; }
+.segmented--small { margin: 0; }
+.segmented--small button { padding: .3rem .7rem; font-size: .78rem; }
+
+.check { display: flex; align-items: center; gap: .5rem; font-size: .87rem; margin: .4rem 0; cursor: pointer; }
+.check input { accent-color: var(--accent); }
+
+.result-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .75rem; }
+.result-head h2 { margin: 0; }
+
+.stage--divein { position: relative; padding: 0; min-height: 300px; }
+#still { display: block; max-width: 100%; max-height: 72vh; cursor: grab; user-select: none; touch-action: none; }
+#still.is-dragging { cursor: grabbing; }
+#player { max-height: 72vh; }
+.busy {
+  position: absolute; top: .6rem; right: .6rem; width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,.25); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+
+.scrub { margin-top: .75rem; }
+.scrub input[type=range] { width: 100%; }
+
+.tuning { margin-top: 1.5rem; }
+.tuning .actions { margin-top: .5rem; align-items: center; }
+.all-settings pre {
+  max-height: 22rem; overflow: auto; font-size: 11px; line-height: 1.45;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: .75rem;
+}
+.results a { color: var(--accent); }
+.result-size { color: var(--muted); font-size: .75rem; flex-shrink: 0; }
+
+.field label.check { display: flex; color: var(--text); font-size: .85rem; }
+.segmented button { white-space: nowrap; }
+.field .check input { width: auto; }

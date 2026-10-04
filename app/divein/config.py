@@ -67,7 +67,8 @@ DEFAULTS: dict = {
                  "max_height": 60, "rest_heights": [0.55, 0.9, 0.7, 0.45],
                  "bottom_y": 60, "corner": 7},
         "line": {"width": 116, "centre_y": 32, "max_amplitude": 26,
-                 "window_ms": 40, "smooth": 5, "stroke": 4.5, "rest_amplitude": 3},
+                 "window_ms": 40, "smooth": 3, "stroke": 4.5, "rest_amplitude": 3,
+                 "min_scale": 0.25},
         "glow": {"blur": 6.0, "alpha": 0.6, "peak_blur": 8.0, "peak_alpha": 0.8},
     },
 
@@ -83,6 +84,11 @@ DEFAULTS: dict = {
         "kick_low_hz": 40.0, "kick_high_hz": 120.0,
         "kick_sensitivity": 1.5, "kick_min_interval_ms": 220.0,
         "kick_floor": 0.02,
+        # A hit counts as a kick only if it peaks at least this fraction as loud
+        # as the strong hits in the previous kick_window_s (plus a short look
+        # ahead). Filters out bass notes, which share the kick's frequency band
+        # but hit softer.
+        "kick_relative": 0.7, "kick_window_s": 3.0, "kick_lookahead_s": 0.6,
     },
 
     # The ghost "stutter" on each kick.
@@ -92,8 +98,11 @@ DEFAULTS: dict = {
     "square": {"size": 1080, "tape_centre_y": 603, "name_last_baseline": 1008,
                "jpg_quality": 92},
 
-    "export": {"crf": 18, "preset": "medium", "preview_seconds": 8.0,
-               "preview_width": 540},
+    # max_mbps caps the bitrate: grain is nearly incompressible, and uncapped a
+    # 25s clip is ~126MB. 16 keeps ~95% of the grain at ~52MB; 10 keeps ~85%
+    # at ~33MB. Instagram re-compresses well below either.
+    "export": {"crf": 18, "preset": "medium", "max_mbps": 16.0,
+               "preview_seconds": 8.0, "preview_width": 540},
 }
 
 

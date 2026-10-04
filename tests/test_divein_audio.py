@@ -225,3 +225,33 @@ def test_a_start_beyond_the_end_is_a_clear_error(tmp_path):
     with pytest.raises(ValueError) as caught:
         decode_excerpt(str(path), start=60.0, seconds=5.0, sample_rate=SR)
     assert "after the end" in str(caught.value)
+
+
+def test_a_bassline_between_the_kicks_is_not_mistaken_for_kicks(cfg):
+    """
+    Found on a real house track: off-beat bass notes live in the same 40-120Hz
+    band and were being counted as kicks, which held the coil open instead of
+    letting it breathe. Real kicks hit roughly twice as hard as those notes.
+    """
+    samples, times = beat(8.0, hats=True)
+    t = np.arange(int(0.12 * SR)) / SR
+    pluck = np.sin(2 * np.pi * 70 * t) * np.exp(-t * 25) * 0.35   # sharp bass note
+    mono = samples[:, 0].copy()
+    for at in np.arange(0.75, 7.6, 0.5):                          # every off-beat
+        i = int(at * SR)
+        mono[i:i + pluck.size] += pluck[: max(0, min(pluck.size, mono.size - i))]
+    samples = np.stack([mono, mono], axis=1).astype(np.float32)
+    result = analyse(samples, SR, FPS, cfg, episode="02.01")
+    found = np.nonzero(result["kick"])[0]
+    expected = [int(round(x * FPS)) for x in times]
+    assert len(found) == len(expected), (list(found), expected)
+
+
+def test_quieter_kicks_in_a_quieter_section_still_count(cfg):
+    """The comparison is with nearby hits, so a breakdown's softer kicks survive."""
+    samples, times = beat(12.0, hats=False)
+    samples[: int(SR * 6)] *= 0.4                                 # first half quieter
+    result = analyse(samples, SR, FPS, cfg, episode="02.01")
+    found = np.nonzero(result["kick"])[0]
+    early = [f for f in found if f < 6 * FPS - 10]
+    assert len(early) >= len([x for x in times if x < 5.7]) - 1
