@@ -1,0 +1,406 @@
+"""
+Drawing one Dive In frame.
+
+Layers, bottom to top:
+  1. the photo — cover-cropped, greyscale, contrast and brightness
+  2. the ghost — the same crop, nudged, blurred, brighter, screened on top
+  3. grain — film-like noise, soft-light blended, changing every 2 frames
+  4. vignette — darkened edges
+  5. the hazard tape (textured like R1), its text
+  6. the DFI logo and the artist name
+  7. the glyph (rings, bars or line)
+  8. the debug read-out, when asked for
+
+Speed comes from doing the slow work once. The photo layers are prepared when
+the scene is built; each grain variation is composited once and reused. A
+frame then only costs the glyph, unless the ghost is mid-twitch.
+"""
+from __future__ import annotations
+
+import hashlib
+import math
+import os
+
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+
+from app.divein.config import rng_for, seed_for
+from app.divein.glyph import Glyph, hex_to_rgb
+
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ASSETS = os.path.join(REPO_DIR, "assets")
+
+# Where the logo sits inside The Dig's overlay PNG (its exact ink bounds).
+LOGO_SOURCE = ("overlay-portrait.png", (49, 66, 219, 142))
+
+# Longest side a source photo is kept at. Enough for a 3x zoom at 1080 wide.
+MAX_SOURCE = 4000
+
+
+# ── assets ───────────────────────────────────────────────────────────────
+def font_path(name: str) -> str | None:
+    """The font file, falling back to the original Squid Boy, then nothing."""
+    for candidate in (name, "SquidBoy.otf"):
+        path = os.path.join(ASSETS, "fonts", candidate)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _font(name: str, size: int):
+    path = font_path(name)
+    if path:
+        return ImageFont.truetype(path, size)
+    return ImageFont.load_default(size=size)
+
+
+def load_photo(path: str) -> Image.Image:
+    """
+    Open a photo the right way up, as greyscale, at a sensible size.
+
+    Phones store photos sideways with a note saying how to turn them, so that
+    note is applied first. Greyscale uses the same weights as the CSS
+    `grayscale()` filter the spec was written against.
+    """
+    img = Image.open(path)
+    img = ImageOps.exif_transpose(img)
+    if img.mode in ("RGBA", "LA", "P"):
+        img = img.convert("RGBA")
+        backing = Image.new("RGBA", img.size, (0, 0, 0, 255))
+        img = Image.alpha_composite(backing, img)
+    img = img.convert("RGB")
+    if max(img.size) > MAX_SOURCE:
+        img.thumbnail((MAX_SOURCE, MAX_SOURCE), Image.LANCZOS)
+    arr = np.asarray(img, dtype=np.float32)
+    grey = arr[..., 0] * 0.2126 + arr[..., 1] * 0.7152 + arr[..., 2] * 0.0722
+    return Image.fromarray(np.clip(np.round(grey), 0, 255).astype(np.uint8), "L")
+
+
+def crop_window(iw: float, ih: float, w: int, h: int, crop: dict | None):
+    """
+    Which part of the photo fills the frame: (x0, y0, width, height) in photo px.
+
+    `zoom` 1 is a plain cover fit; 2 shows half as much. `cx`, `cy` (0..1) is the
+    point of the photo to centre on, clamped so the frame never runs off it.
+    """
+    crop = crop or {}
+    zoom = max(1.0, float(crop.get("zoom", 1.0)))
+    scale = max(w / iw, h / ih) * zoom
+    win_w, win_h = w / scale, h / scale
+    cx = float(np.clip(float(crop.get("cx", 0.5)) * iw, win_w / 2, iw - win_w / 2))
+    cy = float(np.clip(float(crop.get("cy", 0.5)) * ih, win_h / 2, ih - win_h / 2))
+    return cx - win_w / 2, cy - win_h / 2, win_w, win_h
+
+
+# ── text ─────────────────────────────────────────────────────────────────
+def tape_text(cfg: dict, episode: str) -> str:
+    return cfg["tape"]["text"].replace("{episode}", str(episode).strip())
+
+
+def layout_name(text: str, cfg: dict, max_width: float | None = None):
+    """
+    Upper-case the name and fit it onto at most two lines.
+
+    A line break typed by the user is kept. Otherwise a name too wide for one
+    line is split at the space that keeps the longer line shortest. If it still
+    doesn't fit, the type shrinks — never below `min_font_size`.
+    Returns (lines, font_size).
+    """
+    n = cfg["name"]
+    max_width = max_width or n["max_width"]
+    raw = [" ".join(part.split()) for part in str(text or "").upper().split("\n")]
+    raw = [part for part in raw if part]
+    if not raw:
+        return [], n["font_size"]
+    if len(raw) > 2:
+        raw = [raw[0], " ".join(raw[1:])]
+
+    size = int(n["font_size"])
+    font = _font(n["font"], size)
+    if len(raw) == 1 and font.getlength(raw[0]) > max_width and " " in raw[0]:
+        words = raw[0].split()
+        best = min(range(1, len(words)),
+                   key=lambda i: max(font.getlength(" ".join(words[:i])),
+                                     font.getlength(" ".join(words[i:]))))
+        raw = [" ".join(words[:best]), " ".join(words[best:])]
+
+    while size > n["min_font_size"] and \
+            max(_font(n["font"], size).getlength(line) for line in raw) > max_width:
+        size -= 2
+    return raw, max(size, int(n["min_font_size"]))
+
+
+# ── blend maths (all on 0..1 floats) ─────────────────────────────────────
+def _treat(grey: np.ndarray, contrast: float, brightness: float) -> np.ndarray:
+    """CSS contrast() then brightness(), clamped after each like a browser."""
+    out = np.clip((grey - 0.5) * contrast + 0.5, 0.0, 1.0)
+    return np.clip(out * brightness, 0.0, 1.0)
+
+
+def _screen(base, top, opacity):
+    return base + opacity * ((1.0 - (1.0 - base) * (1.0 - top)) - base)
+
+
+def _soft_light(base, top, opacity):
+    """The W3C soft-light formula, mixed in at `opacity`."""
+    d = np.where(base <= 0.25, ((16 * base - 12) * base + 4) * base, np.sqrt(base))
+    light = np.where(top <= 0.5,
+                     base - (1 - 2 * top) * base * (1 - base),
+                     base + (2 * top - 1) * (d - base))
+    return base + opacity * (light - base)
+
+
+# ── the scene ────────────────────────────────────────────────────────────
+class Scene:
+    """Everything about one design that doesn't change frame to frame."""
+
+    def __init__(self, cfg: dict, photo: Image.Image, artist: str, episode: str,
+                 crop: dict | None = None, fmt: str = "portrait"):
+        self.cfg = cfg
+        self.episode = str(episode).strip()
+        self.fmt = fmt
+        self.W = cfg["canvas"]["width"]
+        self.H = cfg["canvas"]["height"] if fmt == "portrait" else cfg["square"]["size"]
+        self.fps = cfg["canvas"]["fps"]
+        self.glyph = Glyph(cfg, self.episode)
+        self._prepare_photo(photo, crop)
+        self._vignette = self._make_vignette()
+        self._tape_alpha, self._text_alpha = self._make_tape()
+        self._overlay = self._make_overlay(artist)
+        self._grain_cache: dict[int, np.ndarray] = {}
+        self._background_cache: dict[int, np.ndarray] = {}
+
+    # ── preparation ──────────────────────────────────────────────────────
+    def _prepare_photo(self, photo: Image.Image, crop: dict | None) -> None:
+        g = self.cfg["ghost"]
+        t = self.cfg["twitch"]
+        # Room around the frame so the ghost can be offset without running out.
+        self.M = int(math.ceil(max(abs(g["offset_x"]), abs(g["offset_y"]))
+                               + t["max_px"] + 4))
+        x0, y0, ww, wh = crop_window(photo.width, photo.height, self.W, self.H, crop)
+        scale = self.W / ww
+        pad = int(math.ceil(self.M / scale)) + 2
+        padded = ImageOps.expand(photo, border=pad, fill=0)
+        box = (x0 - self.M / scale + pad, y0 - self.M / scale + pad,
+               x0 + ww + self.M / scale + pad, y0 + wh + self.M / scale + pad)
+        big = padded.resize((self.W + 2 * self.M, self.H + 2 * self.M),
+                            Image.LANCZOS, box=box)
+        grey = np.asarray(big, dtype=np.float32) / 255.0
+        M = self.M
+        p = self.cfg["photo"]
+        self._base = _treat(grey[M:M + self.H, M:M + self.W], p["contrast"], p["brightness"])
+
+        ghost = _treat(grey, g["contrast"], g["brightness"])
+        ghost_img = Image.fromarray(np.round(ghost * 255).astype(np.uint8), "L")
+        ghost_img = ghost_img.filter(ImageFilter.GaussianBlur(radius=g["blur"]))
+        self._ghost = np.asarray(ghost_img, dtype=np.float32) / 255.0
+
+    def _make_vignette(self) -> np.ndarray:
+        v = self.cfg["vignette"]
+        if not v["enabled"]:
+            return np.ones((self.H, self.W), dtype=np.float32)
+        cx, cy = v["centre_x"] * self.W, v["centre_y"] * self.H
+        # Like CSS "ellipse farthest-corner": the ellipse reaches the far corner.
+        rx = max(cx, self.W - cx) * math.sqrt(2)
+        ry = max(cy, self.H - cy) * math.sqrt(2)
+        y, x = np.mgrid[0:self.H, 0:self.W].astype(np.float32)
+        d = np.hypot((x - cx) / rx, (y - cy) / ry)
+        ramp = np.clip((d - v["inner"]) / max(1.0 - v["inner"], 1e-6), 0.0, 1.0)
+        return (1.0 - ramp * v["edge_alpha"]).astype(np.float32)
+
+    def _tape_centre_y(self) -> float:
+        return self.cfg["tape"]["centre_y"] if self.fmt == "portrait" \
+            else self.cfg["square"]["tape_centre_y"]
+
+    def _make_tape(self):
+        tp = self.cfg["tape"]
+        if not tp["enabled"]:
+            z = np.zeros((self.H, self.W), dtype=np.float32)
+            return z, z
+        a = math.radians(tp["angle"])
+        cx, cy = tp["centre_x"], self._tape_centre_y()
+        y, x = np.mgrid[0:self.H, 0:self.W].astype(np.float32)
+        dist = (x - cx) * math.sin(a) + (y - cy) * math.cos(a)
+        band = np.clip(tp["thickness"] / 2 - np.abs(dist) + 0.5, 0.0, 1.0)
+
+        font = _font(tp["font"], int(tp["font_size"]))
+        unit = tape_text(self.cfg, self.episode)
+        length = int(math.hypot(self.W, self.H)) + 400
+        strip = Image.new("L", (length, int(tp["thickness"]) + 40), 0)
+        draw = ImageDraw.Draw(strip)
+        period = draw.textlength(unit, font=font)
+        # `phase` was measured against R1 on a 1600px strip centred on the
+        # tape; keep the text in the same place relative to the centre.
+        xpos = (length - 1600) / 2 - (tp["phase"] % period)
+        while xpos > 0:
+            xpos -= period
+        mid = strip.height / 2 + tp["text_offset_y"]
+        while xpos < length:
+            draw.text((xpos, mid), unit, font=font, fill=255, anchor="lm")
+            xpos += period
+        rot = strip.rotate(tp["angle"], resample=Image.BICUBIC, expand=True)
+        canvas = Image.new("L", (self.W, self.H), 0)
+        canvas.paste(rot, (int(round(cx - rot.width / 2)), int(round(cy - rot.height / 2))))
+        text = np.asarray(canvas, dtype=np.float32) / 255.0
+        return band.astype(np.float32), (text * band).astype(np.float32)
+
+    def _make_overlay(self, artist: str) -> Image.Image:
+        overlay = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
+        lg = self.cfg["logo"]
+        name, box = LOGO_SOURCE
+        source = os.path.join(ASSETS, name)
+        if os.path.exists(source):
+            logo = Image.open(source).convert("RGBA").crop(box)
+            height = round(logo.height * lg["width"] / logo.width)
+            logo = logo.resize((int(lg["width"]), height), Image.LANCZOS)
+            overlay.alpha_composite(logo, (int(lg["x"]), int(lg["y"])))
+
+        n = self.cfg["name"]
+        lines, size = layout_name(artist, self.cfg)
+        if lines:
+            font = _font(n["font"], size)
+            gap = n["line_gap"] * size / n["font_size"]
+            last = n["last_baseline"] if self.fmt == "portrait" \
+                else self.cfg["square"]["name_last_baseline"]
+            draw = ImageDraw.Draw(overlay)
+            white = hex_to_rgb(self.cfg["colours"]["white"])
+            for i, line in enumerate(lines):
+                baseline = last - (len(lines) - 1 - i) * gap
+                draw.text((n["x"], baseline), line, font=font, fill=white + (255,),
+                          anchor="ls")
+        return overlay
+
+    # ── grain ────────────────────────────────────────────────────────────
+    def grain_index(self, frame: int) -> int:
+        """Which grain variation a frame uses. Changes every `every_frames`."""
+        gr = self.cfg["grain"]
+        pool = max(2, int(gr["pool"]))
+        pair = frame // max(1, int(gr["every_frames"]))
+        def pick(p):
+            return seed_for(self.episode, f"grain-order-{p}") % pool
+        k = pick(pair)
+        if pair > 0 and k == pick(pair - 1):        # never the same twice in a row
+            k = (k + 1) % pool
+        return k
+
+    def _grain(self, k: int) -> np.ndarray:
+        if k not in self._grain_cache:
+            gr = self.cfg["grain"]
+            rng = rng_for(self.episode, f"grain-{self.fmt}-{k}")
+            noise = rng.normal(0.5, gr["sd"] / 255.0, (self.H, self.W)).astype(np.float32)
+            self._grain_cache[k] = np.clip(noise, 0.0, 1.0)
+        return self._grain_cache[k]
+
+    # ── composition ──────────────────────────────────────────────────────
+    def _background(self, k: int, twitch=(0, 0)) -> np.ndarray:
+        """Everything below the glyph, as an HxWx3 uint8 array."""
+        tx, ty = int(round(twitch[0])), int(round(twitch[1]))
+        cacheable = (tx, ty) == (0, 0)
+        if cacheable and k in self._background_cache:
+            return self._background_cache[k]
+
+        cfg = self.cfg
+        value = self._base
+        g = cfg["ghost"]
+        if g["enabled"]:
+            dx, dy = int(round(g["offset_x"])) + tx, int(round(g["offset_y"])) + ty
+            M = self.M
+            ghost = self._ghost[M - dy:M - dy + self.H, M - dx:M - dx + self.W]
+            value = _screen(value, ghost, g["opacity"])
+        grain = self._grain(k) if cfg["grain"]["enabled"] else None
+        if grain is not None:
+            value = _soft_light(value, grain, cfg["grain"]["opacity"])
+        value = value * self._vignette
+        rgb = np.repeat(value[..., None], 3, axis=2)
+
+        tp = cfg["tape"]
+        if tp["enabled"]:
+            yellow = np.array(hex_to_rgb(cfg["colours"]["yellow"]), dtype=np.float32) / 255.0
+            mix = tp["texture_mix"]
+            n = grain if grain is not None else 0.5
+            tex = tp["texture_grey"] + (n - 0.5) * tp["texture_grain"]
+            if np.ndim(tex):
+                tex = tex[..., None]
+            colour = yellow * (1.0 - mix) + mix * tex
+            ta = self._tape_alpha[..., None]
+            rgb = rgb * (1.0 - ta) + colour * ta
+            black = np.array(hex_to_rgb(cfg["colours"]["black"]), dtype=np.float32) / 255.0
+            xa = self._text_alpha[..., None]
+            rgb = rgb * (1.0 - xa) + black * xa
+
+        out = np.clip(np.round(rgb * 255.0), 0, 255).astype(np.uint8)
+        img = Image.fromarray(out, "RGB")
+        img.paste(self._overlay, (0, 0), self._overlay)
+        out = np.asarray(img)
+        if cacheable:
+            self._background_cache[k] = out
+        return out
+
+    def glyph_state(self, frame: int, analysis: dict | None) -> dict:
+        if analysis is None:
+            return self.glyph.rest_state()
+        f = min(frame, len(analysis["gap"]) - 1)
+        state = {"gap": float(analysis["gap"][f]), "glow": float(analysis["glow"][f]),
+                 "bands": list(analysis["bands"][f]), "wave": None, "wave_norm": 1.0}
+        if self.glyph.mode == "line":
+            mono, sr = analysis["mono"], analysis["sample_rate"]
+            end = int((f + 1) * sr / self.fps)
+            span = int(self.cfg["glyph"]["line"]["window_ms"] / 1000.0 * sr)
+            state["wave"] = mono[max(0, end - span):end]
+            if "_wave_norm" not in analysis:
+                analysis["_wave_norm"] = float(np.percentile(np.abs(mono), 99.5)) or 1.0
+            state["wave_norm"] = analysis["_wave_norm"]
+        return state
+
+    def frame(self, f: int, analysis: dict | None = None, debug: bool = False) -> Image.Image:
+        """Frame `f` of the clip. With no analysis: the at-rest look (the still)."""
+        twitch = (0, 0)
+        if analysis is not None:
+            i = min(f, len(analysis["gap"]) - 1)
+            twitch = (analysis["twitch_x"][i], analysis["twitch_y"][i])
+        bg = self._background(self.grain_index(f), twitch)
+        img = Image.fromarray(bg, "RGB")
+        drawn = self.glyph.render(self.glyph_state(f, analysis))
+        if drawn is not None:
+            tile, (x, y) = drawn
+            img.paste(tile.convert("RGB"), (x, y), tile)
+        if debug:
+            self._draw_debug(img, f, analysis)
+        return img
+
+    def _draw_debug(self, img: Image.Image, f: int, analysis: dict | None) -> None:
+        """A read-out of what the analysis is doing on this frame."""
+        draw = ImageDraw.Draw(img, "RGBA")
+        font = ImageFont.load_default(size=22)
+        x0, y0, w, h = 50, 170, 340, 190
+        draw.rectangle([x0, y0, x0 + w, y0 + h], fill=(0, 0, 0, 190))
+        yellow = hex_to_rgb(self.cfg["colours"]["yellow"])
+        if analysis is None:
+            draw.text((x0 + 12, y0 + 12), "at rest (no audio)", font=font, fill="white")
+            return
+        n = len(analysis["gap"])
+        i = min(f, n - 1)
+        kick = bool(analysis["kick"][i])
+        lines = [f"frame {f}   {f / self.fps:6.2f}s",
+                 f"rms {analysis['rms_db'][i]:6.1f} dB   level {analysis['level'][i]:.2f}",
+                 f"gap {analysis['gap'][i]:5.1f}   glow {analysis['glow'][i]:.2f}"]
+        for row, text in enumerate(lines):
+            draw.text((x0 + 12, y0 + 10 + row * 28), text, font=font, fill="white")
+        if kick:
+            draw.rectangle([x0 + w - 92, y0 + 8, x0 + w - 10, y0 + 40], fill=yellow)
+            draw.text((x0 + w - 82, y0 + 11), "KICK", font=font, fill="black")
+        # The last two seconds: level (white), gap (yellow), kicks (ticks).
+        gx, gy, gw, gh = x0 + 12, y0 + 100, w - 24, 78
+        span = 2 * self.fps
+        start = max(0, i - span + 1)
+        idx = np.arange(start, i + 1)
+        if idx.size > 1:
+            xs = gx + (idx - start) * gw / (span - 1)
+            lv = gy + gh - analysis["level"][idx] * gh
+            gp = gy + gh - (analysis["gap"][idx] / self.cfg["audio"]["gap_kick"]) * gh
+            draw.line(list(zip(xs, lv)), fill="white", width=2)
+            draw.line(list(zip(xs, gp)), fill=yellow, width=2)
+            for j, k in zip(idx, analysis["kick"][idx]):
+                if k:
+                    xk = gx + (j - start) * gw / (span - 1)
+                    draw.line([(xk, gy), (xk, gy + 12)], fill=yellow, width=3)

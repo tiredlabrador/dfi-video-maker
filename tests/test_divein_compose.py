@@ -1,0 +1,292 @@
+"""
+Tests for the Dive In picture: the photo treatment and every layer above it.
+
+The layout numbers asserted here were measured from R1 (the target design), so
+a test failing means the output has drifted from the design, not just that
+some code changed.
+"""
+import numpy as np
+import pytest
+from PIL import Image
+
+from app.divein.compose import Scene, crop_window, layout_name, load_photo
+from app.divein.config import merge_config
+
+
+@pytest.fixture
+def cfg():
+    return merge_config({})
+
+
+@pytest.fixture
+def colourful_photo(tmp_path):
+    """A loud, saturated photo, so any colour leaking through is obvious."""
+    h, w = 900, 1400
+    y, x = np.mgrid[0:h, 0:w]
+    arr = np.stack([(x * 255 // w), (y * 255 // h), ((x + y) * 255 // (w + h))],
+                   axis=2).astype(np.uint8)
+    path = tmp_path / "photo.jpg"
+    Image.fromarray(arr).save(path, quality=95)
+    return str(path)
+
+
+@pytest.fixture
+def black_photo(tmp_path):
+    path = tmp_path / "black.png"
+    Image.new("RGB", (1080, 1350), (0, 0, 0)).save(path)
+    return str(path)
+
+
+@pytest.fixture
+def grey_photo(tmp_path):
+    path = tmp_path / "grey.png"
+    Image.new("RGB", (1080, 1350), (128, 128, 128)).save(path)
+    return str(path)
+
+
+def scene(cfg, photo, **kw):
+    args = dict(artist="Artist\nName", episode="02.01", crop=None, fmt="portrait")
+    args.update(kw)
+    return Scene(cfg, load_photo(photo), **args)
+
+
+# ── size and colour ─────────────────────────────────────────────────────
+def test_the_still_is_1080_by_1350(cfg, colourful_photo):
+    img = scene(cfg, colourful_photo).frame(0)
+    assert img.size == (1080, 1350) and img.mode == "RGB"
+
+
+def test_the_square_version_is_1080_by_1080(cfg, colourful_photo):
+    img = scene(cfg, colourful_photo, fmt="square").frame(0)
+    assert img.size == (1080, 1080)
+
+
+def test_no_colour_other_than_black_white_and_yellow_appears(cfg, colourful_photo):
+    """
+    Everything is either grey (photo, logo, name) or a blend towards the brand
+    yellow (tape, glyph). Yellow is R=G, so any pixel with R far from G is a
+    colour that shouldn't be there.
+    """
+    arr = np.asarray(scene(cfg, colourful_photo).frame(0)).astype(int)
+    assert np.abs(arr[..., 0] - arr[..., 1]).max() <= 2
+
+
+def test_the_photo_is_greyscale(cfg, colourful_photo):
+    arr = np.asarray(scene(cfg, colourful_photo).frame(0)).astype(int)
+    patch = arr[300:500, 300:700]                       # clear of all overlays
+    assert (patch[..., 0] == patch[..., 1]).all() and (patch[..., 1] == patch[..., 2]).all()
+
+
+def test_the_glyph_colour_is_the_brand_yellow(cfg, black_photo):
+    arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(int)
+    coil = arr[55:120, 900:1032].reshape(-1, 3)
+    strongest = coil[coil[:, 0].argmax()]
+    assert tuple(strongest) == (255, 254, 1)
+
+
+# ── layout against R1 ───────────────────────────────────────────────────
+def test_the_tape_runs_where_r1_has_it(cfg, black_photo):
+    """R1: top edge at y 775 on the left and 604 on the right; 130px deep."""
+    arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(int)
+    tape = (arr[..., 0] > 120) & (arr[..., 2] < arr[..., 0] - 60)   # yellowish
+    for x, top in ((0, 775), (540, 689), (1079, 604)):
+        rows = np.nonzero(tape[:, x])[0]
+        rows = rows[(rows > top - 40) & (rows < top + 170)]
+        assert abs(rows.min() - top) <= 3, (x, rows.min())
+        assert abs((rows.max() - rows.min()) - 130) <= 4
+
+
+def test_the_tape_reads_with_the_episode_number(cfg):
+    from app.divein.compose import tape_text
+    text = tape_text(cfg, "02.01")
+    assert "DON'T FALL IN • DIVE IN SERIES • 02.01 • " in text
+
+
+def test_the_tape_is_textured_like_r1_by_default(cfg, black_photo):
+    """R1's tape averages about (217, 216, 62) with visible grain."""
+    arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(float)
+    strip = np.array([arr[int(775 - x * 171 / 1079) + 10, x] for x in range(0, 1080, 3)])
+    mean = strip.mean(0)
+    assert abs(mean[0] - 217) < 12 and abs(mean[2] - 62) < 15
+    assert strip[:, 0].std() > 3
+
+
+def test_the_tape_can_be_flat_brand_yellow(cfg, black_photo):
+    cfg["tape"]["texture_mix"] = 0.0
+    arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(int)
+    assert tuple(arr[int(775 - 300 * 171 / 1079) + 10, 300]) == (255, 254, 1)
+
+
+def test_the_logo_sits_where_r1_has_it(cfg, black_photo):
+    arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(int)
+    white = arr[:200, :400].min(axis=2) > 200
+    ys, xs = np.nonzero(white)
+    assert abs(xs.min() - 50) <= 3 and abs(xs.max() - 245) <= 3
+    assert abs(ys.min() - 48) <= 3 and abs(ys.max() - 134) <= 3
+
+
+def test_the_name_sits_where_r1_has_it(cfg, black_photo):
+    """Measured from R1: two lines, cap tops near y 1038 and 1170, left edge x ~44."""
+    arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(int)
+    white = arr[950:1350, :700].min(axis=2) > 200
+    rows = np.nonzero(white.any(axis=1))[0] + 950
+    cols = np.nonzero(white.any(axis=0))[0]
+    assert abs(rows.min() - 1035) <= 6
+    assert abs(rows.max() - 1278) <= 4
+    assert abs(cols.min() - 44) <= 6
+
+
+# ── the name ────────────────────────────────────────────────────────────
+def test_names_are_uppercase(cfg):
+    lines, _ = layout_name("artist name", cfg)
+    assert all(line == line.upper() for line in lines)
+
+
+def test_a_manual_line_break_is_respected(cfg):
+    lines, size = layout_name("Artist\nName", cfg)
+    assert lines == ["ARTIST", "NAME"] and size == 152
+
+
+def test_a_short_name_stays_on_one_line(cfg):
+    assert layout_name("Ezra", cfg)[0] == ["EZRA"]
+
+
+def test_a_long_name_wraps_onto_two_balanced_lines(cfg):
+    """Splits at the space that makes the longer line as short as possible."""
+    from PIL import ImageFont
+    from app.divein.compose import font_path
+    lines, size = layout_name("Crazy P Soundsystem Live", cfg)
+    assert len(lines) == 2 and all(lines)
+    assert " ".join(lines) == "CRAZY P SOUNDSYSTEM LIVE"
+    font = ImageFont.truetype(font_path(cfg["name"]["font"]), size)
+    words = "CRAZY P SOUNDSYSTEM LIVE".split()
+    best = min(max(font.getlength(" ".join(words[:i])), font.getlength(" ".join(words[i:])))
+               for i in range(1, len(words)))
+    assert max(font.getlength(l) for l in lines) == pytest.approx(best)
+
+
+def test_a_name_too_long_for_two_lines_shrinks_rather_than_overflowing(cfg):
+    from PIL import ImageFont
+    from app.divein.compose import font_path
+    lines, size = layout_name("Supercalifragilisticexpialidocious", cfg)
+    assert size < 152 and size >= cfg["name"]["min_font_size"]
+    font = ImageFont.truetype(font_path(cfg["name"]["font"]), size)
+    assert all(font.getlength(l) <= cfg["name"]["max_width"] for l in lines) \
+        or size == cfg["name"]["min_font_size"]
+
+
+def test_more_than_two_manual_lines_are_folded_into_two(cfg):
+    lines, _ = layout_name("A\nB\nC", cfg)
+    assert lines == ["A", "B C"]
+
+
+def test_a_one_line_name_sits_on_the_bottom_line(cfg, black_photo):
+    arr = np.asarray(scene(cfg, black_photo, artist="Ezra").frame(0)).astype(int)
+    white = arr[950:1350, :700].min(axis=2) > 200
+    rows = np.nonzero(white.any(axis=1))[0] + 950
+    assert abs(rows.max() - 1278) <= 4 and rows.min() > 1150
+
+
+# ── grain and determinism ───────────────────────────────────────────────
+def test_the_same_inputs_give_identical_pictures(cfg, colourful_photo):
+    a = np.asarray(scene(cfg, colourful_photo).frame(0))
+    b = np.asarray(scene(cfg, colourful_photo).frame(0))
+    assert np.array_equal(a, b)
+
+
+def test_a_different_episode_gives_different_grain(cfg, grey_photo):
+    a = np.asarray(scene(cfg, grey_photo, episode="02.01").frame(0))[300:500, 300:500]
+    b = np.asarray(scene(cfg, grey_photo, episode="02.02").frame(0))[300:500, 300:500]
+    assert not np.array_equal(a, b)
+
+
+def test_grain_changes_every_second_frame(cfg, grey_photo):
+    s = scene(cfg, grey_photo)
+    f0, f1, f2 = (np.asarray(s.frame(i))[300:500, 300:500] for i in (0, 1, 2))
+    assert np.array_equal(f0, f1)
+    assert not np.array_equal(f0, f2)
+
+
+def test_grain_is_film_like_not_flat(cfg, grey_photo):
+    patch = np.asarray(scene(cfg, grey_photo).frame(0))[300:500, 300:500, 0].astype(float)
+    assert patch.std() > 4
+
+
+def test_grain_can_be_switched_off(cfg, grey_photo):
+    cfg["grain"]["enabled"] = False
+    patch = np.asarray(scene(cfg, grey_photo).frame(0))[300:340, 520:560, 0].astype(float)
+    assert patch.std() < 1.0
+
+
+def test_the_vignette_darkens_the_corners(cfg, grey_photo):
+    cfg["grain"]["enabled"] = False
+    arr = np.asarray(scene(cfg, grey_photo).frame(0)).astype(float)
+    assert arr[1300:1340, 1000:1070].mean() < arr[480:520, 520:560].mean() - 30
+
+
+# ── crop ────────────────────────────────────────────────────────────────
+def test_a_centred_cover_crop_uses_the_middle_of_the_photo():
+    x0, y0, w, h = crop_window(2000, 1000, 1080, 1350, {"zoom": 1, "cx": 0.5, "cy": 0.5})
+    assert h == pytest.approx(1000) and w == pytest.approx(800)
+    assert x0 == pytest.approx(600) and y0 == pytest.approx(0)
+
+
+def test_a_crop_cannot_run_off_the_edge_of_the_photo():
+    x0, _, w, _ = crop_window(2000, 1000, 1080, 1350, {"zoom": 1, "cx": 0.0, "cy": 0.5})
+    assert x0 == 0
+    x0, _, w, _ = crop_window(2000, 1000, 1080, 1350, {"zoom": 1, "cx": 1.0, "cy": 0.5})
+    assert x0 + w == pytest.approx(2000)
+
+
+def test_zooming_in_shows_less_of_the_photo():
+    _, _, w1, _ = crop_window(2000, 1000, 1080, 1350, {"zoom": 1, "cx": 0.5, "cy": 0.5})
+    _, _, w2, _ = crop_window(2000, 1000, 1080, 1350, {"zoom": 2, "cx": 0.5, "cy": 0.5})
+    assert w2 == pytest.approx(w1 / 2)
+
+
+def test_a_phone_photo_is_turned_the_right_way_up(tmp_path):
+    """Phones store photos sideways plus a note saying 'rotate me'."""
+    path = tmp_path / "sideways.jpg"
+    img = Image.new("RGB", (400, 300), (90, 90, 90))
+    exif = Image.Exif()
+    exif[0x0112] = 6                                  # "rotate 90 clockwise"
+    img.save(path, exif=exif.tobytes())
+    assert load_photo(str(path)).size == (300, 400)
+
+
+# ── reactive bits and debug ─────────────────────────────────────────────
+def fake_analysis(n=90, kick_at=30):
+    gap = np.full(n, 9.0); gap[kick_at:kick_at + 3] = 18.0
+    tx = np.zeros(n); ty = np.zeros(n); tx[kick_at] = 5.0
+    return {"gap": gap, "glow": (gap - 9) / 9, "kick": gap == 18.0,
+            "level": np.full(n, 0.5), "rms_db": np.full(n, -12.0),
+            "twitch_x": tx, "twitch_y": ty, "bands": np.full((n, 4), 0.5),
+            "mono": np.zeros(n * 1470, dtype=np.float32), "sample_rate": 44100,
+            "fps": 30}
+
+
+def test_the_coil_opens_on_a_kick_frame(cfg, black_photo):
+    s = scene(cfg, black_photo)
+    a = fake_analysis()
+    calm = np.asarray(s.frame(28, a))[:130, 880:]
+    kick = np.asarray(s.frame(30, a))[:130, 880:]
+    top = lambda arr: np.nonzero((arr[..., 0] > 200) & (arr[..., 2] < 60))[0].min()
+    assert top(kick) < top(calm) - 25
+
+
+def test_the_ghost_twitches_on_a_kick(cfg, colourful_photo):
+    s = scene(cfg, colourful_photo)
+    a = fake_analysis()
+    a["gap"][:] = 9.0                                    # isolate the twitch
+    plain = np.asarray(s.frame(30, dict(a, twitch_x=np.zeros(90))))[300:500, 300:700]
+    nudged = np.asarray(s.frame(30, a))[300:500, 300:700]
+    assert not np.array_equal(plain, nudged)
+
+
+def test_the_debug_overlay_shows_up_only_when_asked(cfg, black_photo):
+    s = scene(cfg, black_photo)
+    a = fake_analysis()
+    off = np.asarray(s.frame(30, a))
+    on = np.asarray(s.frame(30, a, debug=True))
+    assert not np.array_equal(off, on)
+    assert np.array_equal(off, np.asarray(s.frame(30, a, debug=False)))
