@@ -126,6 +126,9 @@ function restore() {
 /* ── the exact still (drawn by the server) ───────────────────────── */
 
 let stillSeq = 0;
+// Identifies this open page, so the server counts its requests separately
+// from any page it replaced (a reload starts the count again from 1).
+const CLIENT = Math.random().toString(36).slice(2) + Date.now().toString(36);
 let stillTimer = null;
 let stillController = null;
 
@@ -142,7 +145,7 @@ async function refreshStill() {
   stillController = new AbortController();
   show($('busy'), true);
 
-  const extra = { format: state.format, seq };
+  const extra = { format: state.format, seq, client: CLIENT };
   if ($('scrub-on').checked && state.audio && state.format === 'portrait') {
     extra.time = Number($('scrub').value);
   }

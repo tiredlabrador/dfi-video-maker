@@ -109,7 +109,7 @@ class DiveInService:
         self._files: dict[str, list] = {}
         self._durations: dict[str, float] = {}
         self._still_lock = threading.Lock()
-        self._latest_still = -1
+        self._latest_still: OrderedDict = OrderedDict()   # page -> newest request
 
     # ── routing ──────────────────────────────────────────────────────────
     def handle(self, h, method: str, path: str) -> None:
@@ -364,13 +364,20 @@ class DiveInService:
         """
         seq = d.get("seq")
         seq = int(self._number(seq, "seq")) if seq is not None else None
+        # Counted per open page: a reloaded page starts again from 1, and must
+        # not be mistaken for an old request from the page it replaced.
+        client = str(d.get("client", ""))[:64]
+        latest = self._latest_still
         if seq is not None:
             with self._still_lock:
-                if seq < self._latest_still:
+                if seq < latest.get(client, -1):
                     return None
-                self._latest_still = seq
+                latest[client] = seq
+                latest.move_to_end(client)
+                while len(latest) > 50:
+                    latest.popitem(last=False)
         with self._still_lock:
-            if seq is not None and seq < self._latest_still:
+            if seq is not None and seq < latest.get(client, -1):
                 return None
             return self._draw_still(d)
 

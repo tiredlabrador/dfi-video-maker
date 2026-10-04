@@ -402,3 +402,20 @@ def test_the_layers_image_is_a_transparent_png(server):
     assert response.headers["Content-Type"] == "image/png"
     img = Image.open(io.BytesIO(response.read()))
     assert img.mode == "RGBA" and img.size == (1080, 1080)
+
+
+def test_a_reloaded_page_still_gets_its_previews(server, media):
+    """
+    Found by Dom: the server remembered the highest request number it had seen,
+    so after a page reload (whose count starts again at 1) every preview was
+    treated as stale and skipped. Each open page now keeps its own count.
+    """
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    before = post_json(server, "/api/divein/still", design(p, seq=250, client="page-a"), raw=True)
+    assert before.status == 200
+    reloaded = post_json(server, "/api/divein/still", design(p, seq=1, client="page-b"), raw=True)
+    assert reloaded.status == 200
+    # Within one page, an older request is still dropped.
+    stale = post_json(server, "/api/divein/still", design(p, seq=200, client="page-a"), raw=True)
+    assert stale.status == 204
