@@ -181,4 +181,5 @@ def test_redrawing_the_same_spacing_reuses_the_drawing(cfg):
 def test_reused_drawings_still_track_small_changes(cfg):
     """Rounding is to an eighth of a pixel: a quarter-pixel change still shows."""
     g = Glyph(cfg, "02.01")
-    assert g.render({"gap": 12.0, "glow": 0.3}) is not g.render({"gap": 12.25, "glow": 0.3})
+    (a, pa), (b, pb) = g.render({"gap": 12.0, "glow": 0.3}), g.render({"gap": 12.25, "glow": 0.3})
+    assert pa != pb or not np.array_equal(np.asarray(a), np.asarray(b))

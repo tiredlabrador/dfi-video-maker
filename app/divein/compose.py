@@ -414,10 +414,12 @@ class Scene:
                 tex = tp["texture_grey"]
             colour = accent * (1.0 - mix) + mix * tex
             colour = np.broadcast_to(colour, ta.shape + (3,))
-            # Black text sits inside the tape: darken by the share it covers.
+            # The text sits inside the tape: blend towards the text colour by
+            # the share of each pixel it covers.
             ink = np.where(ta > 0, xa / np.maximum(ta, 1e-6), 0.0)[..., None]
+            black = np.array(hex_to_rgb(self.cfg["colours"]["black"]), dtype=np.float32) / 255.0
             rgba = np.empty(ta.shape + (4,), dtype=np.uint8)
-            rgba[..., :3] = np.clip(np.round(colour * (1.0 - ink) * 255), 0, 255)
+            rgba[..., :3] = np.clip(np.round((colour * (1.0 - ink) + black * ink) * 255), 0, 255)
             rgba[..., 3] = np.clip(np.round(ta * 255), 0, 255)
             self._tape_cache[k] = (Image.fromarray(rgba, "RGBA"), (0, r0))
         return self._tape_cache[k]

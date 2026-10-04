@@ -112,6 +112,7 @@ class DiveInService:
         self._files: dict[str, list] = {}
         self._durations: dict[str, float] = {}
         self._still_lock = threading.Lock()
+        self._zip_lock = threading.Lock()
         self._latest_still: OrderedDict = OrderedDict()   # page -> newest request
 
     # ── routing ──────────────────────────────────────────────────────────
@@ -462,7 +463,7 @@ class DiveInService:
         """The clip the preview should show: the one picked on the page."""
         try:
             i = int(d.get("preview_index", 0))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             i = 0
         return starts[i] if 0 <= i < len(starts) else starts[0]
 
@@ -547,11 +548,16 @@ class DiveInService:
         import zipfile
         folder = os.path.dirname(self._files[job.id][0])
         zpath = os.path.join(folder, "Dive In.zip")
-        if not os.path.exists(zpath):
-            # Videos are already compressed: storing them is as small and faster.
-            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_STORED) as archive:
-                for path in self._files[job.id]:
-                    archive.write(path, arcname=os.path.basename(path))
+        # Built once, under a lock, into a temporary file that's renamed when
+        # complete — so two clicks at once can't be handed a half-written zip.
+        with self._zip_lock:
+            if not os.path.exists(zpath):
+                partial = zpath + ".part"
+                # Videos are already compressed: storing them is as small and faster.
+                with zipfile.ZipFile(partial, "w", zipfile.ZIP_STORED) as archive:
+                    for path in self._files[job.id]:
+                        archive.write(path, arcname=os.path.basename(path))
+                os.replace(partial, zpath)
         first = os.path.basename(self._files[job.id][0])
         name = re.sub(r"( - \d+)?\.(mp4|jpg)$", "", first).replace(" - square", "") + ".zip"
         return h._send_file(zpath, "application/zip", _ascii_name(name), "attachment")
@@ -568,7 +574,10 @@ class DiveInService:
         if job.status not in ("done", "error"):
             return h._error(409, "That isn't finished yet.")
         try:
-            path = self._files[job.id][int(tail)]
+            n = int(tail)
+            if n < 0:
+                raise IndexError
+            path = self._files[job.id][n]
         except (ValueError, IndexError):
             return h._error(404, "No such file.")
         kind = "image/jpeg" if path.endswith(".jpg") else "video/mp4"

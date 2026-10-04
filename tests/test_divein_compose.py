@@ -423,3 +423,11 @@ def test_the_layers_above_the_photo_can_be_drawn_without_a_photo(cfg):
     assert a[1340, 1070, 3] > 100              # corner: vignette darkens
     assert a[754, 540, 3] == 255               # the tape is solid
     assert a[66:142, 49:219, 3].max() == 255   # the logo
+
+
+def test_the_black_setting_colours_the_tape_text(cfg, black_photo):
+    """colours.black was being ignored for the tape text: a silent no-op."""
+    plain = np.asarray(scene(cfg, black_photo).frame(0))
+    cfg["colours"]["black"] = "#ff0000"
+    tinted = np.asarray(scene(cfg, black_photo).frame(0))
+    assert not np.array_equal(plain, tinted)

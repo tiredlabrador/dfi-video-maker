@@ -86,7 +86,7 @@ function design(extra = {}) {
     crop: state.crop,
     artist: $('artist').value,
     episode: $('episode').value,
-    starts: state.starts.map(timecode).join(', '),
+    starts: state.starts,                       // exact seconds, not rounded
     preview_index: state.selected,
     clip_seconds: clipLength(),
     glyph: $('rings-on').checked ? 'rings' : 'none',
@@ -363,14 +363,19 @@ async function useAudio(file) {
   player.src = URL.createObjectURL(file);
 
   state.overview = null;
+  stopListening();
   state.starts = state.starts.filter((s) => s < state.audio.duration);
   show($('timeline'), true);
   $('timeline-hover').textContent = 'Drawing the mix…';
-  renderClips();
-  drawTimeline();
-  updateScrub();
+  startsChanged();
+  const token = state.audio.token;
   try {
-    state.overview = await (await fetch(`/api/divein/overview?audio=${encodeURIComponent(state.audio.token)}`)).json();
+    const response = await fetch(`/api/divein/overview?audio=${encodeURIComponent(token)}`);
+    const overview = response.ok ? await response.json() : null;
+    // Only if it's still the mix on screen, and only if it's a real answer.
+    if (state.audio && state.audio.token === token && overview && Array.isArray(overview.peaks)) {
+      state.overview = overview;
+    }
   } catch { /* the timeline still works without the shape */ }
   $('timeline-hover').textContent = 'Click to add a clip. Drag a clip to move it.';
   drawTimeline();
@@ -396,7 +401,7 @@ function drawTimeline() {
   if (!total) return;
 
   const accent = ACCENTS[state.colour] || ACCENTS.yellow;
-  const peaks = state.overview ? state.overview.peaks : [];
+  const peaks = (state.overview && state.overview.peaks) || [];
   // The mix's loudness, as a mirrored shape.
   ctx.fillStyle = 'rgba(255,255,255,0.28)';
   for (let x = 0; x < w; x++) {
@@ -507,6 +512,7 @@ function startsFromText() {
   const parts = $('starts').value.split(/[,;\n]+/).map((p) => p.trim()).filter(Boolean);
   const times = parts.map(parseTime);
   if (times.some((t) => t === null)) return false;      // keep typing
+  stopListening();
   state.starts = times;
   if (state.selected >= times.length) state.selected = 0;
   renderClips();
@@ -541,6 +547,8 @@ function renderClips() {
     remove.addEventListener('click', (e) => {
       e.stopPropagation();
       if (state.listening === i) stopListening();
+      else if (state.listening !== null && state.listening > i) state.listening -= 1;
+      if (state.selected > i) state.selected -= 1;
       state.starts.splice(i, 1);
       startsChanged();
     });
@@ -668,6 +676,10 @@ async function startJob(kind) {
   setError('');
   if (!state.photo) { setError('Choose a photo first.'); return; }
   if (!state.audio) { setError('Choose the mix first.'); return; }
+  if ($('starts').value.trim() && !startsFromText()) {
+    setError('One of the typed start times can’t be read. Use mm:ss or h:mm:ss, separated by commas.');
+    return;
+  }
   if (!state.starts.length) { setError('Add a clip: click on the mix where it should start.'); return; }
   stopListening();
   setBusy(true);
@@ -815,8 +827,13 @@ document.addEventListener('DOMContentLoaded', () => {
   wireDrop($('photo-drop'), $('photo-input'), usePhoto);
   wireDrop($('stage'), null, usePhoto);                 // drop straight on the preview
   wireDrop($('audio-drop'), $('audio-input'), useAudio);
-  document.addEventListener('paste', (e) => {           // paste a photo from anywhere
-    const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+  document.addEventListener('paste', (e) => {           // paste a photo from anywhere...
+    const items = [...(e.clipboardData?.items || [])];
+    const typing = e.target.closest && e.target.closest('input, textarea');
+    // ...except into a text box when there's text to paste (copied cells from
+    // a spreadsheet carry a picture as well as the text).
+    if (typing && items.some((i) => i.type === 'text/plain')) return;
+    const item = items.find((i) => i.type.startsWith('image/'));
     if (item) { e.preventDefault(); usePhoto(item.getAsFile()); }
   });
 

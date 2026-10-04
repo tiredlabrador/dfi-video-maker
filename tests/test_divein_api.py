@@ -490,3 +490,61 @@ def test_all_the_files_download_together(server, media):
     archive = zipfile.ZipFile(io.BytesIO(get(server, done["zip_url"]).read()))
     names = archive.namelist()
     assert sum(n.endswith(".mp4") for n in names) == 2 and sum(n.endswith(".jpg") for n in names) == 1
+
+
+# ── found in the second review ──────────────────────────────────────────
+def test_two_download_all_requests_at_once_both_get_a_whole_zip(server, media):
+    import zipfile
+    from concurrent.futures import ThreadPoolExecutor
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    done = wait(server, post_json(server, "/api/divein/export",
+                                  design(p, a, starts="0:02, 0:10"))["id"])
+    with ThreadPoolExecutor(6) as pool:
+        blobs = list(pool.map(lambda _: get(server, done["zip_url"]).read(), range(6)))
+    for blob in blobs:
+        assert zipfile.ZipFile(io.BytesIO(blob)).testzip() is None
+        assert len(zipfile.ZipFile(io.BytesIO(blob)).namelist()) == 3
+
+
+def test_the_still_shows_the_selected_clip_not_always_the_first(server, two_part_mix, media):
+    """
+    Clip 1 sits in the steady quiet part; clip 2 straddles the jump to loud.
+    (Loudness is judged within each clip, so a steady clip reads as middling.)
+    Two and a half seconds in, clip 2 is past the jump and the coil is open.
+    """
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.wav", two_part_mix)["token"]
+    def still(index):
+        return post_json(server, "/api/divein/still",
+                         design(p, a, starts="0:00, 0:08", clip_seconds=5, time=2.5,
+                                preview_index=index), raw=True).read()
+    assert still(0) != still(1)
+    assert still(1) == still(1)
+
+
+@pytest.mark.parametrize("index", [float("inf"), -1, "x", 1e308])
+def test_a_strange_preview_index_falls_back_to_the_first_clip(index):
+    from app.divein.api import DiveInService
+    assert DiveInService._preview_start({"preview_index": index}, [10.0, 50.0]) == 10.0
+
+
+def test_a_negative_file_number_is_not_served(server, media):
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    done = wait(server, post_json(server, "/api/divein/export", design(p, a, starts="0:02"))["id"])
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        get(server, f"/api/divein/jobs/{done['id']}/files/-1")
+    assert caught.value.code == 404
+
+
+def test_start_times_are_kept_exact_not_rounded_to_the_second(server, media):
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    from app.divein.api import DiveInService
+    svc = server.divein
+    assert svc._starts({"starts": [10.6, "0:20.25"], "audio": a}) == [10.6, 20.25]
