@@ -30,6 +30,9 @@ BANNER = """
 def _first_free_port(host: str, preferred: int) -> int:
     """Use the usual port if it is free, otherwise let the system pick one."""
     with socket.socket() as probe:
+        # Same setting the server itself uses, so a port that has only just
+        # been released (by the previous run) counts as free, as it really is.
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((host, preferred))
             return preferred
