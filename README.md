@@ -20,7 +20,8 @@ your browser and pulls the latest version from GitHub each time.
 - **`app/divein/`** — Dive In. Every number lives in `app/divein/config.py` and
   can be overridden from the Tuning box on the page.
 - **`assets/`** — the logo overlays, fallback artwork and the hole motif. The
-  licensed fonts go in `assets/fonts` and are never committed.
+  licensed font (`SquidBoyV4-Regular.otf`) goes in `assets/fonts` and is never
+  committed.
 
 ## Using it
 

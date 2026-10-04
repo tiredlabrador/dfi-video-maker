@@ -39,12 +39,9 @@ MAX_SOURCE = 4000
 
 # ── assets ───────────────────────────────────────────────────────────────
 def font_path(name: str) -> str | None:
-    """The font file, falling back to the original Squid Boy, then nothing."""
-    for candidate in (name, "SquidBoy.otf"):
-        path = os.path.join(ASSETS, "fonts", candidate)
-        if os.path.exists(path):
-            return path
-    return None
+    """The font file, or None if it isn't installed (a substitute is used)."""
+    path = os.path.join(ASSETS, "fonts", name)
+    return path if os.path.exists(path) else None
 
 
 def _font(name: str, size: int):

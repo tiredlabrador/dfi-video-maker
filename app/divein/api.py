@@ -20,7 +20,6 @@ import subprocess
 import tempfile
 import threading
 import traceback
-import unicodedata
 from collections import OrderedDict
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
@@ -90,12 +89,6 @@ def _scrub_paths(message: str) -> str:
     return re.sub(r"(/[^\s:'\"]+)+", "…", message)
 
 
-def _ascii_name(name: str) -> str:
-    """A plain-ASCII version of a filename, for the one place that needs it."""
-    folded = unicodedata.normalize("NFKD", name.replace("’", "'").replace("–", "-"))
-    return folded.encode("ascii", "ignore").decode() or "dive-in"
-
-
 class DiveInService:
     def __init__(self, work_dir: str, jobs):
         self.root = os.path.join(work_dir, "divein")
@@ -151,8 +144,7 @@ class DiveInService:
                                  + _scrub_paths(str(exc) or exc.__class__.__name__))
 
     def defaults(self) -> dict:
-        fonts = {name: font_path(name) is not None and
-                 os.path.basename(font_path(name)) == name
+        fonts = {name: font_path(name) is not None
                  for name in {DEFAULTS["tape"]["font"], DEFAULTS["name"]["font"]}}
         return {"defaults": DEFAULTS, "fonts": fonts}
 
@@ -560,7 +552,7 @@ class DiveInService:
                 os.replace(partial, zpath)
         first = os.path.basename(self._files[job.id][0])
         name = re.sub(r"( - \d+)?\.(mp4|jpg)$", "", first).replace(" - square", "") + ".zip"
-        return h._send_file(zpath, "application/zip", _ascii_name(name), "attachment")
+        return h._send_file(zpath, "application/zip", name, "attachment")
 
     def _job_route(self, h, rest: str):
         if rest.endswith("/zip"):
@@ -581,6 +573,4 @@ class DiveInService:
         except (ValueError, IndexError):
             return h._error(404, "No such file.")
         kind = "image/jpeg" if path.endswith(".jpg") else "video/mp4"
-        # The download header only allows plain ASCII; the page's own
-        # download link carries the real name, curly quotes and all.
-        return h._send_file(path, kind, _ascii_name(os.path.basename(path)))
+        return h._send_file(path, kind, os.path.basename(path))

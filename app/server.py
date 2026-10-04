@@ -19,7 +19,8 @@ import shutil
 import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+import unicodedata
+from urllib.parse import quote, unquote, urlparse
 
 import generate_video as gv
 from app.batch import BatchItem, render_batch, zip_results
@@ -36,6 +37,19 @@ REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # — which is why the cap is well above a normal track but nowhere near a
 # gigabyte. Real files are 5-50MB.
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024      # 100 MB
+
+
+def _disposition(kind: str, filename: str) -> str:
+    """
+    The header that names a downloaded file.
+
+    HTTP headers only carry Latin-1, so a name like "Mike’s Łukasz" would kill
+    the connection. Send a plain-ASCII stand-in, plus the real name encoded the
+    standard way (RFC 6266), which every current browser uses instead.
+    """
+    plain = unicodedata.normalize("NFKD", filename.replace("’", "'").replace("–", "-"))
+    plain = plain.encode("ascii", "ignore").decode().replace('"', "'") or "download"
+    return f"{kind}; filename=\"{plain}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -59,7 +73,7 @@ class _Handler(BaseHTTPRequestHandler):
         size = os.path.getsize(path)
         headers = {
             "Accept-Ranges": "bytes",
-            "Content-Disposition": f'{disposition}; filename="{filename}"',
+            "Content-Disposition": _disposition(disposition, filename),
         }
         start, end = 0, size - 1
         status = 200
@@ -530,7 +544,7 @@ class DFIServer(ThreadingHTTPServer):
         settings = dict(
             overlay_path=self._asset("overlay-portrait.png"),
             fallback_path=self._asset("fallback.png"),
-            font_path=self._asset(os.path.join("fonts", "SquidBoy.otf")),
+            font_path=self._asset(os.path.join("fonts", "SquidBoyV4-Regular.otf")),
             motion_blur_samples=10,
             shutter_fraction=0.7,
         )
