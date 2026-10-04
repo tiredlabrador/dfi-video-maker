@@ -48,7 +48,7 @@ def test_the_rings_are_deliberately_not_perfect_ellipses(cfg):
     g = Glyph(cfg, "02.01")
     rc = cfg["glyph"]["rings"]
     for i, ring in enumerate(g.ring_points(gap=9)):
-        cy = rc["bottom_y"] - (4 - i) * 9
+        cy = rc["centre_y"] + (i - 2) * 9
         dev = ellipse_deviation(ring, rc["rx"], rc["ry"], rc["centre_x"], cy)
         # Wobbly, but only slightly: high frequency, low amplitude.
         assert 0.15 < dev.std() < 0.9, dev.std()
@@ -60,22 +60,29 @@ def test_ring_shapes_never_change_only_their_spacing_does(cfg):
     closed = g.ring_points(gap=2)
     open_ = g.ring_points(gap=18)
     for i, (a, b) in enumerate(zip(closed, open_)):
-        shift = (4 - i) * (18 - 2)
+        shift = (i - 2) * (18 - 2)
         assert np.allclose(a[:, 0], b[:, 0])
-        assert np.allclose(a[:, 1] - shift, b[:, 1])
+        assert np.allclose(a[:, 1] + shift, b[:, 1])
 
 
-def test_the_bottom_ring_is_anchored(cfg):
+def test_the_middle_ring_is_anchored(cfg):
+    """Dom: the coil should open from its vertical centre, not from the bottom."""
     g = Glyph(cfg, "02.01")
-    assert np.allclose(g.ring_points(gap=2)[4], g.ring_points(gap=18)[4])
+    assert np.allclose(g.ring_points(gap=2)[2], g.ring_points(gap=18)[2])
 
 
-def test_rings_stack_upwards_by_the_gap(cfg):
+def test_rings_spread_evenly_either_side_of_the_middle(cfg):
     g = Glyph(cfg, "02.01")
-    bottom = cfg["glyph"]["rings"]["bottom_y"]
+    centre = cfg["glyph"]["rings"]["centre_y"]
     for gap in (2, 9, 18):
         for i, ring in enumerate(g.ring_points(gap=gap)):
-            assert ring[:, 1].mean() == pytest.approx(bottom - (4 - i) * gap, abs=0.4)
+            assert ring[:, 1].mean() == pytest.approx(centre + (i - 2) * gap, abs=0.4)
+
+
+def test_the_old_bottom_up_growth_is_still_available(cfg):
+    cfg["glyph"]["rings"]["anchor"] = "bottom"
+    g = Glyph(cfg, "02.01")
+    assert np.allclose(g.ring_points(gap=2)[4], g.ring_points(gap=18)[4])
 
 
 def test_each_ring_has_its_own_wobble_and_start_angle(cfg):
@@ -111,25 +118,35 @@ def test_every_mode_draws_only_in_brand_yellow(cfg, mode):
     assert opaque_colours(tile) == {YELLOW}
 
 
+@pytest.mark.parametrize("accent, rgb", [("red", (234, 32, 32)), ("green", (61, 255, 0)),
+                                         ("white", (255, 255, 255))])
+def test_the_glyph_takes_the_chosen_brand_colour(cfg, accent, rgb):
+    cfg["accent"] = accent
+    g = Glyph(cfg, "02.01")
+    tile, _ = g.render(g.rest_state())
+    assert opaque_colours(tile) == {rgb}
+
+
 def test_none_mode_draws_nothing(cfg):
     cfg["glyph"]["mode"] = "none"
     g = Glyph(cfg, "02.01")
     assert g.render(g.rest_state()) is None
 
 
-def test_at_rest_the_rings_sit_where_r1_has_them(cfg):
-    """Measured from R1: the strong yellow of the coil spans x 905-1026, y 58-117."""
+def test_at_rest_the_coil_lines_up_with_the_dig_logo(cfg):
+    """
+    The logo now matches The Dig (ink x 49-218, y 66-141). The coil mirrors it:
+    the same 49px margin on the right, centred on the logo's middle (y 103.5).
+    """
     g = Glyph(cfg, "02.01")
     tile, (x, y) = g.render(g.rest_state())
     alpha = np.asarray(tile)[..., 3] > 128          # the stroke itself, not glow
     ys, xs = np.nonzero(alpha)
-    assert abs((x + xs.min()) - 905) <= 3
-    assert abs((x + xs.max()) - 1026) <= 3
-    assert abs((y + ys.min()) - 58) <= 3
-    assert abs((y + ys.max()) - 117) <= 3
+    assert abs((x + xs.max()) - (1080 - 49)) <= 2
+    assert abs((y + (ys.min() + ys.max()) / 2) - 103.5) <= 2
 
 
-def test_an_open_coil_is_taller_and_grows_upwards(cfg):
+def test_an_open_coil_grows_equally_up_and_down(cfg):
     g = Glyph(cfg, "02.01")
     rest, (_, y_rest) = g.render(g.rest_state())
     peak, (_, y_peak) = g.render(dict(g.rest_state(), gap=18, glow=1.0))
@@ -138,9 +155,9 @@ def test_an_open_coil_is_taller_and_grows_upwards(cfg):
         return ys.min(), ys.max()
     top_r, bot_r = extent(rest, y_rest)
     top_p, bot_p = extent(peak, y_peak)
-    assert abs(bot_r - bot_p) <= 1, "the bottom ring must stay put"
-    # Gap 9 -> 18 lifts the top ring by 4 x 9 = 36px.
-    assert abs((top_r - top_p) - 36) <= 2
+    # Gap 9 -> 18 moves the outer rings 2 x 9 = 18px each way.
+    assert abs((top_r - top_p) - 18) <= 2
+    assert abs((bot_p - bot_r) - 18) <= 2
 
 
 def test_the_glow_is_stronger_at_a_peak(cfg):

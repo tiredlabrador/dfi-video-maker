@@ -23,12 +23,17 @@ def hex_to_rgb(value: str) -> tuple[int, int, int]:
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
+def accent_rgb(cfg: dict) -> tuple[int, int, int]:
+    """The chosen brand accent (yellow, red, green or white) as RGB."""
+    return hex_to_rgb(cfg["accents"][cfg["accent"]])
+
+
 class Glyph:
     def __init__(self, cfg: dict, episode: str):
         self.cfg = cfg
         self.g = cfg["glyph"]
         self.mode = self.g["mode"]
-        self.yellow = hex_to_rgb(cfg["colours"]["yellow"])
+        self.colour = accent_rgb(cfg)
         self._rings = self._make_rings(episode)
         self._rest_wave = self._make_rest_wave(episode)
 
@@ -63,12 +68,20 @@ class Glyph:
         return raw / (np.abs(raw).max() or 1.0)
 
     def ring_points(self, gap: float) -> list[np.ndarray]:
-        """Each ring's outline in glyph units, stacked with the given gap."""
+        """
+        Each ring's outline in glyph units, stacked with the given gap.
+
+        Anchored at the middle ring by default, so the coil opens and closes
+        evenly up and down; or at the bottom ring, growing upwards.
+        """
         rc = self.g["rings"]
         count = len(self._rings)
         out = []
         for i, shape in enumerate(self._rings):
-            cy = rc["bottom_y"] - (count - 1 - i) * gap
+            if rc["anchor"] == "bottom":
+                cy = rc["bottom_y"] - (count - 1 - i) * gap
+            else:
+                cy = rc["centre_y"] + (i - (count - 1) / 2) * gap
             out.append(shape + np.array([rc["centre_x"], cy]))
         return out
 
@@ -146,7 +159,7 @@ class Glyph:
         g_ = np.asarray(halo, dtype=np.float32) / 255.0 * alpha
         combined = m + g_ * (1.0 - m)
         tile = np.zeros((h, w, 4), dtype=np.uint8)
-        tile[..., :3] = self.yellow
+        tile[..., :3] = self.colour
         tile[..., 3] = np.clip(np.round(combined * 255), 0, 255).astype(np.uint8)
         tile[tile[..., 3] == 0, :3] = 0
         return Image.fromarray(tile, "RGBA"), (x0, y0)

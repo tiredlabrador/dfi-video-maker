@@ -25,7 +25,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from app.divein.config import rng_for, seed_for
-from app.divein.glyph import Glyph, hex_to_rgb
+from app.divein.glyph import Glyph, accent_rgb, hex_to_rgb
+from app.divein.hole import hole_mask
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ASSETS = os.path.join(REPO_DIR, "assets")
@@ -207,13 +208,15 @@ class Scene:
         self.H = cfg["canvas"]["height"] if fmt == "portrait" else cfg["square"]["size"]
         self.fps = cfg["canvas"]["fps"]
         self.glyph = Glyph(cfg, self.episode)
-        self._prepare_photo(photo, crop)
+        if photo is not None:                 # None: just the layers above it
+            self._prepare_photo(photo, crop)
         self._vignette = self._make_vignette()
         self._tape_alpha, self._text_alpha = self._make_tape()
         self._overlay = self._make_overlay(artist)
         self._grain_cache: dict[int, np.ndarray] = {}
         self._background_cache: dict[int, np.ndarray] = {}
         self._grain_sequence: list[int] = []
+        self._hole_tile = None
 
     # ── preparation ──────────────────────────────────────────────────────
     def _prepare_photo(self, photo: Image.Image, crop: dict | None) -> None:
@@ -311,8 +314,11 @@ class Scene:
             white = hex_to_rgb(self.cfg["colours"]["white"])
             for i, line in enumerate(lines):
                 baseline = last - (len(lines) - 1 - i) * gap
-                draw.text((n["x"], baseline), line, font=font, fill=white + (255,),
-                          anchor="ls")
+                # `x` is where the ink begins, so nudge by the first letter's
+                # side bearing: then the name lines up exactly with the logo.
+                bearing = font.getbbox(line, anchor="ls")[0]
+                draw.text((n["x"] - bearing, baseline), line, font=font,
+                          fill=white + (255,), anchor="ls")
         return overlay
 
     # ── grain ────────────────────────────────────────────────────────────
@@ -371,13 +377,13 @@ class Scene:
 
         tp = cfg["tape"]
         if tp["enabled"]:
-            yellow = np.array(hex_to_rgb(cfg["colours"]["yellow"]), dtype=np.float32) / 255.0
+            accent = np.array(accent_rgb(cfg), dtype=np.float32) / 255.0
             mix = tp["texture_mix"]
             n = grain if grain is not None else 0.5
             tex = tp["texture_grey"] + (n - 0.5) * tp["texture_grain"]
             if np.ndim(tex):
                 tex = tex[..., None]
-            colour = yellow * (1.0 - mix) + mix * tex
+            colour = accent * (1.0 - mix) + mix * tex
             ta = self._tape_alpha[..., None]
             rgb = rgb * (1.0 - ta) + colour * ta
             black = np.array(hex_to_rgb(cfg["colours"]["black"]), dtype=np.float32) / 255.0
@@ -414,12 +420,77 @@ class Scene:
             twitch = (analysis["twitch_x"][i], analysis["twitch_y"][i])
         bg = self._background(self.grain_index(f), twitch)
         img = Image.fromarray(bg, "RGB")
-        drawn = self.glyph.render(self.glyph_state(f, analysis))
+        # The 1:1 JPG always shows the hole motif; the video shows the glyph.
+        drawn = self._hole() if self.fmt == "square" \
+            else self.glyph.render(self.glyph_state(f, analysis))
         if drawn is not None:
             tile, (x, y) = drawn
             img.paste(tile.convert("RGB"), (x, y), tile)
         if debug:
             self._draw_debug(img, f, analysis)
+        return img
+
+    def _hole(self):
+        """The hole motif in the accent colour, centred where the coil rests."""
+        if self._hole_tile is None:
+            h = self.cfg["hole"]
+            g = self.cfg["glyph"]
+            path = os.path.join(ASSETS, h["file"])
+            if not os.path.exists(path):
+                return None
+            mask = hole_mask(path, int(h["width"]))
+            rc = g["rings"]
+            cx = g["box_x"] + rc["centre_x"] * g["scale"] + h["offset_x"]
+            if rc["anchor"] == "bottom":
+                mid = rc["bottom_y"] - (rc["count"] - 1) / 2 * self.cfg["audio"]["gap_rest"]
+            else:
+                mid = rc["centre_y"]
+            cy = g["box_y"] + mid * g["scale"] + h["offset_y"]
+            glow = g["glow"]
+            pad = int(3 * glow["blur"]) + 2 if h["glow"] else 0
+            m = Image.new("L", (mask.width + 2 * pad, mask.height + 2 * pad), 0)
+            m.paste(mask, (pad, pad))
+            a = np.asarray(m, dtype=np.float32) / 255.0
+            if h["glow"]:
+                halo = m.filter(ImageFilter.GaussianBlur(radius=glow["blur"] / 2.0))
+                a = a + (np.asarray(halo, dtype=np.float32) / 255.0 * glow["alpha"]) * (1 - a)
+            tile = np.zeros(a.shape + (4,), dtype=np.uint8)
+            tile[..., :3] = accent_rgb(self.cfg)
+            tile[..., 3] = np.clip(np.round(a * 255), 0, 255).astype(np.uint8)
+            x = int(round(cx - m.width / 2))
+            y = int(round(cy - m.height / 2))
+            self._hole_tile = (Image.fromarray(tile, "RGBA"), (x, y))
+        return self._hole_tile
+
+    def layers(self) -> Image.Image:
+        """
+        Everything above the photo, as one transparent image: vignette, tape,
+        logo, name and the glyph (or hole) at rest. The page lays this over the
+        photo to draw a quick draft while you drag, before the exact render.
+        """
+        cfg = self.cfg
+        out = np.zeros((self.H, self.W, 4), dtype=np.float32)
+        # Vignette: black at the darkening amount (same maths as multiplying).
+        out[..., 3] = 1.0 - self._vignette
+        def over(rgb, alpha):
+            a = alpha[..., None]
+            out_a = out[..., 3:4]
+            new_a = a + out_a * (1 - a)
+            out[..., :3] = np.where(new_a > 0, (rgb * a + out[..., :3] * out_a * (1 - a))
+                                    / np.maximum(new_a, 1e-6), 0)
+            out[..., 3:4] = new_a
+        tp = cfg["tape"]
+        if tp["enabled"]:
+            accent = np.array(accent_rgb(cfg), dtype=np.float32) / 255.0
+            flat = accent * (1 - tp["texture_mix"]) + tp["texture_mix"] * tp["texture_grey"]
+            over(np.broadcast_to(flat, (self.H, self.W, 3)), self._tape_alpha)
+            over(np.zeros((self.H, self.W, 3), dtype=np.float32), self._text_alpha)
+        img = Image.fromarray(np.clip(np.round(out * 255), 0, 255).astype(np.uint8), "RGBA")
+        img.alpha_composite(self._overlay)
+        drawn = self._hole() if self.fmt == "square" else self.glyph.render(self.glyph.rest_state())
+        if drawn is not None:
+            tile, (x, y) = drawn
+            img.alpha_composite(tile, (max(0, x), max(0, y)))
         return img
 
     def _draw_debug(self, img: Image.Image, f: int, analysis: dict | None) -> None:
@@ -428,7 +499,7 @@ class Scene:
         font = ImageFont.load_default(size=22)
         x0, y0, w, h = 50, 170, 340, 190
         draw.rectangle([x0, y0, x0 + w, y0 + h], fill=(0, 0, 0, 190))
-        yellow = hex_to_rgb(self.cfg["colours"]["yellow"])
+        yellow = accent_rgb(self.cfg)
         if analysis is None:
             draw.text((x0 + 12, y0 + 12), "at rest (no audio)", font=font, fill="white")
             return

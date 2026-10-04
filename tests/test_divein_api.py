@@ -280,7 +280,7 @@ def test_an_upload_name_with_curly_quotes_arrives_intact(server, media):
     {"overrides": {"tape": {"text": ""}}},
     {"overrides": {"glyph": {"rings": {"count": 0}}}},
     {"overrides": {"glyph": {"bars": {"count": 0}}}},
-    {"overrides": {"colours": {"yellow": "yellow"}}},
+    {"overrides": {"accents": {"yellow": "yellow"}}},
     {"overrides": {"canvas": {"width": 0}}},
     {"overrides": {"canvas": {"fps": 0}}},
     {"overrides": {"grain": {"pool": 1000}}},
@@ -373,3 +373,32 @@ def test_a_stale_still_request_is_skipped(server, media):
     assert newer.status == 200
     older = post_json(server, "/api/divein/still", design(p, seq=9), raw=True)
     assert older.status == 204
+
+
+# ── colour choice and the fast drag preview ─────────────────────────────
+def test_the_colour_can_be_chosen(server, media):
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    img = Image.open(io.BytesIO(post_json(server, "/api/divein/still",
+                                          design(p, colour="green"), raw=True).read()))
+    a = np.asarray(img.convert("RGB")).astype(int)
+    green = (a[..., 1] > 230) & (a[..., 0] < 90) & (a[..., 2] < 40)
+    assert green.sum() > 2000                      # tape and coil
+
+
+def test_an_unknown_colour_is_refused(server, media):
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        post_json(server, "/api/divein/still", design(p, colour="purple"), raw=True)
+    assert caught.value.code == 400
+
+
+def test_the_layers_image_is_a_transparent_png(server):
+    """No photo needed: it's what goes on top of the photo in the drag draft."""
+    response = post_json(server, "/api/divein/layers",
+                         {"artist": "A", "episode": "02.01", "format": "square",
+                          "colour": "red", "glyph": "rings", "overrides": {}}, raw=True)
+    assert response.headers["Content-Type"] == "image/png"
+    img = Image.open(io.BytesIO(response.read()))
+    assert img.mode == "RGBA" and img.size == (1080, 1080)

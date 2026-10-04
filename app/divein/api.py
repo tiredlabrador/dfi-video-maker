@@ -104,6 +104,7 @@ class DiveInService:
         self.jobs = jobs
         self._photos = _LRU(4)
         self._scenes = _LRU(2)
+        self._layer_cache = _LRU(8)
         self._audio = _LRU(6)
         self._files: dict[str, list] = {}
         self._durations: dict[str, float] = {}
@@ -127,6 +128,8 @@ class DiveInService:
                 body, warning = result
                 extra = {"X-Divein-Warning": quote(warning)} if warning else None
                 return h._send(200, body, "image/jpeg", extra)
+            if method == "POST" and path == "/api/divein/layers":
+                return h._send(200, self._layers(self._read_json(h)), "image/png")
             if method == "POST" and path in ("/api/divein/preview", "/api/divein/export"):
                 payload = self._read_json(h)
                 job = self._start(payload, preview=path.endswith("preview"))
@@ -253,7 +256,13 @@ class DiveInService:
             if isinstance(overrides.get(group), dict) and key in overrides[group]:
                 raise BadRequest(f"{group}.{key} is set with {control} on the page, "
                                  f"not in Tuning. (Style, twitch and clip length live there.)")
+        if "accent" in overrides:
+            raise BadRequest("accent is set with the Colour buttons on the page, not in Tuning.")
         cfg = merge_config(overrides)
+        colour = d.get("colour", cfg["accent"])
+        if colour not in cfg["accents"]:
+            raise BadRequest(f"Colour must be one of: {', '.join(cfg['accents'])}.")
+        cfg["accent"] = colour
         mode = d.get("glyph", cfg["glyph"]["mode"])
         if mode not in ("rings", "bars", "line", "none"):
             raise BadRequest("Glyph style must be rings, bars, line or none.")
@@ -386,6 +395,19 @@ class DiveInService:
         warning = ("Squid Boy has no letter for: " + " ".join(lacking)
                    + " — it won't appear.") if lacking else ""
         return buffer.getvalue(), warning
+
+    def _layers(self, d: dict) -> bytes:
+        """Everything above the photo, for the page's quick drag draft."""
+        cfg = self._config(d)
+        fmt = "square" if d.get("format") == "square" else "portrait"
+        artist = str(d.get("artist", ""))
+        episode = str(d.get("episode", "")).strip() or "00.00"
+        key = json.dumps(["layers", artist, episode, fmt, cfg], sort_keys=True)
+        def make():
+            buffer = io.BytesIO()
+            Scene(cfg, None, artist, episode, fmt=fmt).layers().save(buffer, "PNG")
+            return buffer.getvalue()
+        return self._layer_cache.get_or(key, make)
 
     # ── preview and export jobs ──────────────────────────────────────────
     def _filename(self, d: dict, suffix: str) -> str:

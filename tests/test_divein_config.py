@@ -75,7 +75,10 @@ def test_the_spec_values_are_the_defaults():
     a = d["audio"]
     assert (a["gap_silence"], a["gap_low"], a["gap_rest"], a["gap_kick"]) == (2, 5, 9, 18)
     assert (a["kick_low_hz"], a["kick_high_hz"]) == (40, 120)
-    assert d["colours"] == {"black": "#000000", "white": "#ffffff", "yellow": "#fffe01"}
+    assert d["colours"] == {"black": "#000000", "white": "#ffffff"}
+    assert d["accent"] == "yellow"
+    assert d["accents"] == {"yellow": "#fffe01", "red": "#ea2020",
+                            "green": "#3dff00", "white": "#ffffff"}
 
 
 # ── seeding ────────────────────────────────────────────────────────────
@@ -116,7 +119,9 @@ def test_the_defaults_pass_their_own_checks():
     ({"glyph": {"bars": {"count": 0}}}, "glyph.bars.count"),
     ({"grain": {"pool": 1000}}, "grain.pool"),
     ({"ghost": {"opacity": 2}}, "ghost.opacity"),
-    ({"colours": {"yellow": "yellow"}}, "colours.yellow"),
+    ({"accents": {"yellow": "yellow"}}, "accents.yellow"),
+    ({"accent": "purple"}, "accent"),
+    ({"glyph": {"rings": {"anchor": "sideways"}}}, "anchor"),
     ({"tape": {"text": "   "}}, "tape.text"),
     ({"audio": {"gap_low": 20}}, "gap"),
     ({"twitch": {"min_px": 9, "max_px": 3}}, "twitch"),

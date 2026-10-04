@@ -61,14 +61,44 @@ def test_the_square_version_is_1080_by_1080(cfg, colourful_photo):
     assert img.size == (1080, 1080)
 
 
-def test_no_colour_other_than_black_white_and_yellow_appears(cfg, colourful_photo):
+@pytest.mark.parametrize("accent", ["yellow", "red", "green", "white"])
+def test_no_colour_other_than_black_white_and_the_accent_appears(cfg, colourful_photo,
+                                                                 accent):
     """
-    Everything is either grey (photo, logo, name) or a blend towards the brand
-    yellow (tape, glyph). Yellow is R=G, so any pixel with R far from G is a
-    colour that shouldn't be there.
+    Every pixel is a grey (photo, logo, name), the accent, or a blend of the
+    two (tape texture, glow). A blend of grey and the accent only ever leans
+    in the accent's direction, so each pixel's tint must point the same way
+    as the accent's. Anything pointing elsewhere is a colour that shouldn't be
+    there.
     """
-    arr = np.asarray(scene(cfg, colourful_photo).frame(0)).astype(int)
-    assert np.abs(arr[..., 0] - arr[..., 1]).max() <= 2
+    from app.divein.glyph import hex_to_rgb
+    cfg["accent"] = accent
+    arr = np.asarray(scene(cfg, colourful_photo).frame(0)).astype(int).reshape(-1, 3)
+    assert stray_colour(arr, hex_to_rgb(cfg["accents"][accent])) == 0
+
+
+def stray_colour(pixels, accent):
+    """How many pixels are tinted in any direction other than the accent's."""
+    tint = np.stack([pixels[:, 0] - pixels[:, 2], pixels[:, 1] - pixels[:, 2]], 1)
+    ref = np.array([accent[0] - accent[2], accent[1] - accent[2]])
+    if not ref.any():                               # white: everything must be grey
+        return int((np.abs(pixels - pixels[:, :1]).max(axis=1) > 2).sum())
+    sideways = np.abs(tint[:, 0] * ref[1] - tint[:, 1] * ref[0])
+    backwards = tint @ ref < -3 * np.abs(ref).sum()  # e.g. blue against yellow
+    allowed = 3 * (np.abs(ref).sum() + 1)           # rounding of 8-bit blends
+    return int(((sideways > allowed) | backwards).sum())
+
+
+@pytest.mark.parametrize("accent, intruder", [((255, 254, 1), (0, 0, 255)),
+                                              ((255, 254, 1), (255, 0, 0)),
+                                              ((234, 32, 32), (61, 255, 0)),
+                                              ((61, 255, 0), (234, 32, 32)),
+                                              ((255, 255, 255), (255, 254, 1))])
+def test_the_colour_check_itself_catches_a_stray_colour(accent, intruder):
+    a = np.array(accent)
+    good = np.array([[120, 120, 120], (0.5 * a + 60).astype(int), a])
+    assert stray_colour(good, accent) == 0
+    assert stray_colour(np.vstack([good, [intruder]]), accent) == 1
 
 
 def test_the_photo_is_greyscale(cfg, colourful_photo):
@@ -79,9 +109,16 @@ def test_the_photo_is_greyscale(cfg, colourful_photo):
 
 def test_the_glyph_colour_is_the_brand_yellow(cfg, black_photo):
     arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(int)
-    coil = arr[55:120, 900:1032].reshape(-1, 3)
+    coil = arr[60:150, 890:1040].reshape(-1, 3)
     strongest = coil[coil[:, 0].argmax()]
     assert tuple(strongest) == (255, 254, 1)
+
+
+def test_the_tape_takes_the_chosen_colour(cfg, black_photo):
+    cfg["accent"] = "red"
+    cfg["tape"]["texture_mix"] = 0.0
+    arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(int)
+    assert tuple(arr[int(775 - 300 * 171 / 1079) + 10, 300]) == (234, 32, 32)
 
 
 # ── layout against R1 ───────────────────────────────────────────────────
@@ -117,23 +154,30 @@ def test_the_tape_can_be_flat_brand_yellow(cfg, black_photo):
     assert tuple(arr[int(775 - 300 * 171 / 1079) + 10, 300]) == (255, 254, 1)
 
 
-def test_the_logo_sits_where_r1_has_it(cfg, black_photo):
+def test_the_logo_matches_the_dig(cfg, black_photo):
+    """Dom: same size and place as The Dig's logo (ink x 49-218, y 66-141)."""
     arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(int)
     white = arr[:200, :400].min(axis=2) > 200
     ys, xs = np.nonzero(white)
-    assert abs(xs.min() - 50) <= 3 and abs(xs.max() - 245) <= 3
-    assert abs(ys.min() - 48) <= 3 and abs(ys.max() - 134) <= 3
+    assert abs(xs.min() - 49) <= 1 and abs(xs.max() - 218) <= 1
+    assert abs(ys.min() - 66) <= 1 and abs(ys.max() - 141) <= 1
+
+
+def test_the_name_lines_up_with_the_logo(cfg, black_photo):
+    """The name's left edge sits on the same 49px margin as the logo."""
+    arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(int)
+    white = arr[950:1350, :700].min(axis=2) > 200
+    cols = np.nonzero(white.any(axis=0))[0]
+    assert abs(cols.min() - 49) <= 1
 
 
 def test_the_name_sits_where_r1_has_it(cfg, black_photo):
-    """Measured from R1: two lines, cap tops near y 1038 and 1170, left edge x ~44."""
+    """Measured from R1: two lines, cap tops near y 1038 and 1170."""
     arr = np.asarray(scene(cfg, black_photo).frame(0)).astype(int)
     white = arr[950:1350, :700].min(axis=2) > 200
     rows = np.nonzero(white.any(axis=1))[0] + 950
-    cols = np.nonzero(white.any(axis=0))[0]
     assert abs(rows.min() - 1035) <= 6
     assert abs(rows.max() - 1278) <= 4
-    assert abs(cols.min() - 44) <= 6
 
 
 # ── the name ────────────────────────────────────────────────────────────
@@ -310,10 +354,12 @@ def fake_analysis(n=90, kick_at=30):
 def test_the_coil_opens_on_a_kick_frame(cfg, black_photo):
     s = scene(cfg, black_photo)
     a = fake_analysis()
-    calm = np.asarray(s.frame(28, a))[:130, 880:]
-    kick = np.asarray(s.frame(30, a))[:130, 880:]
-    top = lambda arr: np.nonzero((arr[..., 0] > 200) & (arr[..., 2] < 60))[0].min()
-    assert top(kick) < top(calm) - 25
+    calm = np.asarray(s.frame(28, a))[:220, 880:]
+    kick = np.asarray(s.frame(30, a))[:220, 880:]
+    rows = lambda arr: np.nonzero((arr[..., 0] > 200) & (arr[..., 2] < 60))[0]
+    # Gap 9 -> 18 opens the coil from its middle: 18px up and 18px down.
+    assert abs((rows(calm).min() - rows(kick).min()) - 18) <= 2
+    assert abs((rows(kick).max() - rows(calm).max()) - 18) <= 2
 
 
 def test_the_ghost_twitches_on_a_kick(cfg, colourful_photo):
@@ -339,3 +385,50 @@ def test_a_16_bit_photo_is_not_turned_white(tmp_path):
     Image.fromarray(np.full((400, 300), 32768, dtype=np.uint16)).save(path)
     grey = np.asarray(load_photo(str(path)))
     assert 110 <= grey.mean() <= 145
+
+
+# ── the square JPG uses the hole motif ──────────────────────────────────
+@pytest.mark.parametrize("mode", ["rings", "bars", "line", "none"])
+def test_the_square_jpg_shows_the_hole_motif_whatever_the_glyph(cfg, black_photo, mode):
+    """Dom: the still JPG uses the hole motif, never the waveform or coil."""
+    cfg["glyph"]["mode"] = mode
+    img = np.asarray(scene(cfg, black_photo, fmt="square").frame(0)).astype(int)
+    cfg2 = merge_config({})
+    ref = np.asarray(scene(cfg2, black_photo, fmt="square").frame(0)).astype(int)
+    corner = (slice(30, 180), slice(880, 1060))
+    assert np.array_equal(img[corner], ref[corner])
+    # ...and it isn't the coil: the 4:5 at-rest corner looks different.
+    port = np.asarray(scene(cfg2, black_photo).frame(0)).astype(int)
+    assert not np.array_equal(img[corner], port[corner])
+
+
+def test_the_hole_motif_sits_where_the_coil_does_and_is_brand_coloured(cfg, black_photo):
+    img = np.asarray(scene(cfg, black_photo, fmt="square").frame(0)).astype(int)
+    strong = (img[..., 0] > 240) & (img[..., 1] > 240) & (img[..., 2] < 20)
+    ys, xs = np.nonzero(strong[:250, 700:])
+    xs = xs + 700
+    assert abs(xs.max() - (1080 - 49)) <= 3
+    assert abs((ys.min() + ys.max()) / 2 - 103.5) <= 3
+
+
+def test_the_hole_motif_follows_the_colour_choice(cfg, black_photo):
+    cfg["accent"] = "red"
+    img = np.asarray(scene(cfg, black_photo, fmt="square").frame(0)).astype(int)
+    red = (img[..., 0] > 225) & (np.abs(img[..., 1] - 32) < 6) & (np.abs(img[..., 2] - 32) < 6)
+    assert red[:250, 850:].sum() > 500
+
+
+# ── layers for the fast drag preview ────────────────────────────────────
+def test_the_layers_above_the_photo_can_be_drawn_without_a_photo(cfg):
+    """
+    The page draws a quick draft while you drag: your photo, plus everything
+    above it from this image. Where the photo shows through it's transparent
+    (apart from the vignette's darkening).
+    """
+    layers = Scene(cfg, None, "Artist\nName", "02.01").layers()
+    assert layers.mode == "RGBA" and layers.size == (1080, 1350)
+    a = np.asarray(layers)
+    assert a[400, 540, 3] < 10                 # middle: photo shows through
+    assert a[1340, 1070, 3] > 100              # corner: vignette darkens
+    assert a[754, 540, 3] == 255               # the tape is solid
+    assert a[66:142, 49:219, 3].max() == 255   # the logo

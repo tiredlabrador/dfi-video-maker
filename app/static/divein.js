@@ -1,8 +1,10 @@
 /*
  * Dive In (test) — the page.
  *
- * Every picture you see is drawn by the same Python code that makes the export,
- * so the preview can't drift from the real thing.
+ * Every finished picture comes from the same Python code that makes the export,
+ * so the preview can't drift from the real thing. While you drag or zoom, the
+ * page draws a quick draft itself (your photo with the same treatment, plus
+ * everything above it) and swaps in the exact render when you let go.
  */
 'use strict';
 
@@ -16,8 +18,19 @@ const state = {
   crop: { zoom: 1, cx: 0.5, cy: 0.5 },
   format: 'portrait',
   glyph: 'rings',
+  colour: 'yellow',
   overrides: {},
+  defaults: null,
   polling: null,
+  // The quick draft
+  photoEl: null,          // the chosen photo, decoded by the browser
+  srcBase: null,          // photo, treated like layer 1, at a manageable size
+  srcGhost: null,         // photo, treated like layer 2
+  srcScale: 1,            // srcBase pixels per photo pixel
+  layers: null,           // everything above the photo, from the server
+  interacting: false,
+  draftQueued: false,
+  idleTimer: null,
 };
 
 /* ── helpers ─────────────────────────────────────────────────────── */
@@ -39,6 +52,15 @@ function timecode(seconds) {
   return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
+/** A setting, from the Tuning overrides if set there, else the defaults. */
+function setting(path, fallback) {
+  const dig = (obj) => path.split('.').reduce((o, k) => (o && k in o ? o[k] : undefined), obj);
+  const v = dig(state.overrides);
+  if (v !== undefined) return v;
+  const d = state.defaults && dig(state.defaults);
+  return d !== undefined ? d : fallback;
+}
+
 function design(extra = {}) {
   return {
     photo: state.photo && state.photo.token,
@@ -49,6 +71,7 @@ function design(extra = {}) {
     starts: $('starts').value,
     clip_seconds: Number($('clip-seconds').value) || 25,
     glyph: state.glyph,
+    colour: state.colour,
     twitch: $('twitch').checked,
     debug: $('debug').checked,
     overrides: state.overrides,
@@ -75,7 +98,8 @@ function save() {
     localStorage.setItem(STORE, JSON.stringify({
       artist: $('artist').value, episode: $('episode').value,
       starts: $('starts').value, clip: $('clip-seconds').value,
-      glyph: state.glyph, twitch: $('twitch').checked, debug: $('debug').checked,
+      glyph: state.glyph, colour: state.colour,
+      twitch: $('twitch').checked, debug: $('debug').checked,
       overrides: $('overrides').value,
     }));
   } catch { /* private window: fine */ }
@@ -92,12 +116,14 @@ function restore() {
   $('twitch').checked = saved.twitch ?? true;
   $('debug').checked = saved.debug ?? false;
   $('overrides').value = saved.overrides ?? '{}';
-  setSegment('glyph-choice', saved.glyph || 'rings');
   state.glyph = saved.glyph || 'rings';
+  state.colour = saved.colour || 'yellow';
+  setSegment('glyph-choice', state.glyph);
+  setSegment('colour-choice', state.colour);
   try { state.overrides = JSON.parse($('overrides').value || '{}'); } catch { state.overrides = {}; }
 }
 
-/* ── the live still ──────────────────────────────────────────────── */
+/* ── the exact still (drawn by the server) ───────────────────────── */
 
 let stillSeq = 0;
 let stillTimer = null;
@@ -136,17 +162,120 @@ async function refreshStill() {
     setWarning(warning);
     const img = $('still');
     const old = img.src;
+    img.onload = () => {
+      // Swap the draft out only once you've stopped moving things.
+      if (!state.interacting && seq === stillSeq) show($('draft'), false);
+    };
     img.src = URL.createObjectURL(blob);
     if (old.startsWith('blob:')) URL.revokeObjectURL(old);
     show($('stage-empty'), false);
     show($('player'), false);
-    show(img, true);
+    show($('frame'), true);
     setError('');
   } catch (error) {
     if (error.name !== 'AbortError') setError(error.message);
   } finally {
     if (seq === stillSeq) show($('busy'), false);
   }
+}
+
+/* ── the quick draft (drawn here, while dragging) ────────────────── */
+
+let layersSeq = 0;
+let layersTimer = null;
+
+function scheduleLayers(delay = 150) {
+  clearTimeout(layersTimer);
+  layersTimer = setTimeout(refreshLayers, delay);
+}
+
+async function refreshLayers() {
+  const seq = ++layersSeq;
+  try {
+    const response = await postJSON('/api/divein/layers', design({ format: state.format }));
+    const blob = await response.blob();
+    if (seq !== layersSeq) return;
+    const img = new Image();
+    img.src = URL.createObjectURL(blob);
+    await img.decode();
+    if (seq !== layersSeq) return;
+    if (state.layers) URL.revokeObjectURL(state.layers.src);
+    state.layers = img;
+  } catch { /* the exact still will report any problem */ }
+}
+
+function prepareDraftSources() {
+  const img = state.photoEl;
+  if (!img) return;
+  const [W, H] = canvasSize();
+  // Keep the working copy to a size that zooms well but draws fast.
+  const k = Math.min(1, 2400 / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+  const make = (filter) => {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.filter = filter;
+    ctx.drawImage(img, 0, 0, w, h);
+    return c;
+  };
+  // Output pixels per photo pixel at zoom 1, to size the ghost's blur.
+  const coverScale = Math.max(W / img.naturalWidth, H / img.naturalHeight);
+  const blur = setting('ghost.blur', 5) * k / coverScale;
+  state.srcScale = k;
+  state.srcBase = make(`grayscale(1) contrast(${setting('photo.contrast', 1.35)}) brightness(${setting('photo.brightness', 0.9)})`);
+  state.srcGhost = make(`grayscale(1) contrast(${setting('ghost.contrast', 1.6)}) brightness(${setting('ghost.brightness', 1.3)}) blur(${blur}px)`);
+}
+
+function cropWindow() {
+  const [W, H] = canvasSize();
+  const { width: iw, height: ih } = state.photo;
+  const scale = Math.max(W / iw, H / ih) * state.crop.zoom;
+  const ww = W / scale, wh = H / scale;
+  const cx = Math.min(iw - ww / 2, Math.max(ww / 2, state.crop.cx * iw));
+  const cy = Math.min(ih - wh / 2, Math.max(wh / 2, state.crop.cy * ih));
+  return { x0: cx - ww / 2, y0: cy - wh / 2, ww, wh, scale };
+}
+
+function drawDraft() {
+  state.draftQueued = false;
+  if (!state.srcBase || !state.photo) return;
+  const canvas = $('draft');
+  const [W, H] = canvasSize();
+  const cw = W / 2, ch = H / 2;                     // half size: plenty while moving
+  if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+  const ctx = canvas.getContext('2d');
+  const k = state.srcScale;
+  const { x0, y0, ww, wh } = cropWindow();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.drawImage(state.srcBase, x0 * k, y0 * k, ww * k, wh * k, 0, 0, cw, ch);
+  if (setting('ghost.enabled', true)) {
+    const dx = setting('ghost.offset_x', 22) * cw / W, dy = setting('ghost.offset_y', -10) * ch / H;
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = setting('ghost.opacity', 0.45);
+    ctx.drawImage(state.srcGhost, x0 * k, y0 * k, ww * k, wh * k, dx, dy, cw, ch);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+  }
+  if (state.layers) ctx.drawImage(state.layers, 0, 0, cw, ch);
+  show(canvas, true);
+}
+
+function requestDraft() {
+  if (state.draftQueued) return;
+  state.draftQueued = true;
+  requestAnimationFrame(drawDraft);
+}
+
+/** You're moving something: draw drafts now, the exact still once you stop. */
+function nudged() {
+  state.interacting = true;
+  requestDraft();
+  clearTimeout(state.idleTimer);
+  state.idleTimer = setTimeout(() => { state.interacting = false; scheduleStill(0); }, 180);
 }
 
 /* ── uploads ─────────────────────────────────────────────────────── */
@@ -179,6 +308,18 @@ async function usePhoto(file) {
   resetCrop();
   show($('zoom-row'), true);
   scheduleStill(0);
+  scheduleLayers(0);
+
+  // Decode it here too, for the quick draft. If the browser can't (rare
+  // formats), dragging still works — just without the instant draft.
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+  try {
+    await img.decode();
+    if (state.photoEl) URL.revokeObjectURL(state.photoEl.src);
+    state.photoEl = img;
+    prepareDraftSources();
+  } catch { state.photoEl = null; state.srcBase = null; }
 }
 
 async function useAudio(file) {
@@ -220,38 +361,54 @@ function resetCrop() {
   $('zoom').value = 1;
 }
 
+/** Zoom to `zoom`, keeping the photo point under (fx, fy) of the frame still. */
+function zoomAt(zoom, fx = 0.5, fy = 0.5) {
+  if (!state.photo) return;
+  zoom = Math.min(3, Math.max(1, zoom));
+  const before = cropWindow();
+  const px = before.x0 + fx * before.ww, py = before.y0 + fy * before.wh;
+  state.crop.zoom = zoom;
+  const after = cropWindow();
+  const { width: iw, height: ih } = state.photo;
+  state.crop.cx = (px - fx * after.ww + after.ww / 2) / iw;
+  state.crop.cy = (py - fy * after.wh + after.wh / 2) / ih;
+  clampCrop();
+  $('zoom').value = zoom;
+  nudged();
+}
+
 function wireDrag() {
-  const img = $('still');
+  const frame = $('frame');
   let last = null;
-  img.addEventListener('pointerdown', (e) => {
+  frame.addEventListener('pointerdown', (e) => {
     if (!state.photo) return;
     last = { x: e.clientX, y: e.clientY };
-    img.setPointerCapture(e.pointerId);
-    img.classList.add('is-dragging');
+    frame.setPointerCapture(e.pointerId);
+    frame.classList.add('is-dragging');
   });
-  img.addEventListener('pointermove', (e) => {
+  frame.addEventListener('pointermove', (e) => {
     if (!last) return;
-    const [W, H] = canvasSize();
+    const [W] = canvasSize();
     const { width: iw, height: ih } = state.photo;
-    const perDisplayPx = W / img.clientWidth;            // canvas px per screen px
-    const scale = Math.max(W / iw, H / ih) * state.crop.zoom;
-    state.crop.cx -= (e.clientX - last.x) * perDisplayPx / scale / iw;
-    state.crop.cy -= (e.clientY - last.y) * perDisplayPx / scale / ih;
+    const { scale } = cropWindow();
+    const perScreenPx = W / frame.clientWidth;            // canvas px per screen px
+    state.crop.cx -= (e.clientX - last.x) * perScreenPx / scale / iw;
+    state.crop.cy -= (e.clientY - last.y) * perScreenPx / scale / ih;
     last = { x: e.clientX, y: e.clientY };
     clampCrop();
-    scheduleStill(60);
+    nudged();
   });
-  const end = () => { last = null; img.classList.remove('is-dragging'); };
-  img.addEventListener('pointerup', end);
-  img.addEventListener('pointercancel', end);
-  img.addEventListener('wheel', (e) => {
+  const end = () => { last = null; frame.classList.remove('is-dragging'); };
+  frame.addEventListener('pointerup', end);
+  frame.addEventListener('pointercancel', end);
+  frame.addEventListener('wheel', (e) => {
     if (!state.photo) return;
     e.preventDefault();
-    const zoom = Math.min(3, Math.max(1, state.crop.zoom * (e.deltaY < 0 ? 1.04 : 1 / 1.04)));
-    state.crop.zoom = zoom;
-    $('zoom').value = zoom;
-    clampCrop();
-    scheduleStill(60);
+    const box = frame.getBoundingClientRect();
+    const fx = (e.clientX - box.left) / box.width, fy = (e.clientY - box.top) / box.height;
+    // Pinch on a trackpad arrives as a wheel with ctrl held, in small steps.
+    const rate = e.ctrlKey ? 0.01 : 0.0025;
+    zoomAt(state.crop.zoom * Math.exp(-e.deltaY * rate), fx, fy);
   }, { passive: false });
 }
 
@@ -341,7 +498,7 @@ function showFiles(files, kind) {
 
 function playVideo(url) {
   const player = $('player');
-  show($('still'), false);
+  show($('frame'), false);
   show($('stage-empty'), false);
   player.src = url;
   show(player, true);
@@ -373,6 +530,7 @@ function wireDrop(zone, input, onFile) {
 async function loadDefaults() {
   try {
     const data = await (await fetch('/api/divein/defaults')).json();
+    state.defaults = data.defaults;
     $('defaults').textContent = JSON.stringify(data.defaults, null, 2);
     const missing = Object.entries(data.fonts).filter(([, ok]) => !ok).map(([n]) => n);
     if (missing.length) {
@@ -381,10 +539,26 @@ async function loadDefaults() {
     } else {
       $('health').textContent = 'Ready';
     }
+    prepareDraftSources();
   } catch {
     $('health').textContent = 'Not connected';
     $('health').classList.add('bad');
   }
+}
+
+/** The design itself changed (not just the crop): redraw both. */
+function designChanged(delay = 250) {
+  scheduleStill(delay);
+  scheduleLayers(delay);
+}
+
+function setFormat(value) {
+  state.format = value;
+  $('frame').classList.toggle('is-square', value === 'square');
+  clampCrop();
+  show($('draft'), false);
+  prepareDraftSources();
+  designChanged(0);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -394,17 +568,16 @@ document.addEventListener('DOMContentLoaded', () => {
   wireDrop($('photo-drop'), $('photo-input'), usePhoto);
   wireDrop($('audio-drop'), $('audio-input'), useAudio);
 
-  for (const id of ['artist', 'episode']) $(id).addEventListener('input', () => scheduleStill(250));
+  for (const id of ['artist', 'episode']) $(id).addEventListener('input', () => designChanged(250));
   $('starts').addEventListener('input', () => { save(); if ($('scrub-on').checked) scheduleStill(400); });
   $('clip-seconds').addEventListener('input', () => { save(); updateScrub(); });
   $('twitch').addEventListener('change', () => { save(); if ($('scrub-on').checked) scheduleStill(0); });
   $('debug').addEventListener('change', () => scheduleStill(0));
-  $('zoom').addEventListener('input', () => {
-    state.crop.zoom = Number($('zoom').value) || 1; clampCrop(); scheduleStill(60);
-  });
-  $('reset-crop').addEventListener('click', () => { resetCrop(); scheduleStill(0); });
-  wireSegment('glyph-choice', (v) => { state.glyph = v; scheduleStill(0); });
-  wireSegment('format-choice', (v) => { state.format = v; clampCrop(); scheduleStill(0); });
+  $('zoom').addEventListener('input', () => zoomAt(Number($('zoom').value) || 1));
+  $('reset-crop').addEventListener('click', () => { resetCrop(); nudged(); });
+  wireSegment('glyph-choice', (v) => { state.glyph = v; designChanged(0); });
+  wireSegment('colour-choice', (v) => { state.colour = v; designChanged(0); });
+  wireSegment('format-choice', setFormat);
 
   $('scrub-on').addEventListener('change', () => { updateScrub(); scheduleStill(0); });
   $('scrub').addEventListener('input', () => { updateScrub(); scheduleStill(80); });
@@ -413,13 +586,14 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       state.overrides = JSON.parse($('overrides').value || '{}');
       setError('');
-      scheduleStill(0);
+      prepareDraftSources();
+      designChanged(0);
     } catch (error) {
       setError(`That isn't valid JSON: ${error.message}`);
     }
   });
   $('clear-overrides').addEventListener('click', () => {
-    $('overrides').value = '{}'; state.overrides = {}; scheduleStill(0);
+    $('overrides').value = '{}'; state.overrides = {}; prepareDraftSources(); designChanged(0);
   });
 
   $('preview-btn').addEventListener('click', () => startJob('preview'));

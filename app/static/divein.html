@@ -29,7 +29,7 @@
       <input type="file" id="photo-input" accept="image/*" hidden>
       <span class="drop-icon" aria-hidden="true">◐</span>
       <span class="drop-text" id="photo-label">Drop a photo here, or click to choose</span>
-      <span class="drop-hint">Any shape. Drag the preview to reposition it.</span>
+      <span class="drop-hint">Any shape. Drag the preview to move it; scroll or pinch to zoom.</span>
     </label>
     <div class="field inline" id="zoom-row" hidden>
       <label for="zoom">Zoom</label>
@@ -72,6 +72,12 @@
       <button type="button" role="radio" data-value="line" aria-checked="false">Line</button>
       <button type="button" role="radio" data-value="none" aria-checked="false">None</button>
     </div>
+    <div class="segmented swatches" role="radiogroup" aria-label="Colour" id="colour-choice">
+      <button type="button" role="radio" data-value="yellow" aria-checked="true"><i style="background:#fffe01"></i>Yellow</button>
+      <button type="button" role="radio" data-value="red" aria-checked="false"><i style="background:#ea2020"></i>Red</button>
+      <button type="button" role="radio" data-value="green" aria-checked="false"><i style="background:#3dff00"></i>Green</button>
+      <button type="button" role="radio" data-value="white" aria-checked="false"><i style="background:#ffffff"></i>White</button>
+    </div>
     <label class="check"><input type="checkbox" id="twitch" checked> Kick twitch on the ghost layer</label>
     <label class="check"><input type="checkbox" id="debug"> Debug overlay (level, kicks, gap)</label>
 
@@ -109,7 +115,10 @@
 
     <div class="stage stage--divein" id="stage">
       <div class="stage-empty" id="stage-empty"><p>Choose a photo to start.</p></div>
-      <img id="still" alt="Live preview" hidden draggable="false">
+      <div class="frame" id="frame" hidden>
+        <img id="still" alt="Live preview" draggable="false">
+        <canvas id="draft" hidden></canvas>
+      </div>
       <video id="player" controls playsinline hidden></video>
       <div class="busy" id="busy" hidden></div>
     </div>

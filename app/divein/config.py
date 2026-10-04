@@ -20,8 +20,12 @@ import numpy as np
 DEFAULTS: dict = {
     "canvas": {"width": 1080, "height": 1350, "fps": 30},
 
-    # The only three colours in the design.
-    "colours": {"black": "#000000", "white": "#ffffff", "yellow": "#fffe01"},
+    # Black and white, plus one accent for the tape and the glyph.
+    "colours": {"black": "#000000", "white": "#ffffff"},
+    # The DFI brand accents (from Dom's palette).
+    "accents": {"yellow": "#fffe01", "red": "#ea2020", "green": "#3dff00",
+                "white": "#ffffff"},
+    "accent": "yellow",
 
     # Layer 1: the photo, cover-fitted, greyscale.
     "photo": {"contrast": 1.35, "brightness": 0.9},
@@ -39,8 +43,8 @@ DEFAULTS: dict = {
     "vignette": {"enabled": True, "centre_x": 0.5, "centre_y": 0.375,
                  "inner": 0.45, "edge_alpha": 0.65},
 
-    # Layer 5: the DFI logo, taken from The Dig's overlay and scaled to match R1.
-    "logo": {"x": 49, "y": 48, "width": 197},
+    # Layer 5: the DFI logo, the same size and place as in The Dig.
+    "logo": {"x": 49, "y": 66, "width": 170},
 
     # Layer 7: hazard tape. `angle` is degrees, rising to the right.
     # `texture_*` reproduce R1, where the tape is a duller, grainy yellow rather
@@ -52,19 +56,23 @@ DEFAULTS: dict = {
              "texture_mix": 0.37, "texture_grey": 0.576, "texture_grain": 0.52},
 
     # Layer 8: artist name, bottom-left, up to two lines, bottom-anchored.
-    "name": {"font": "SquidBoyV4-Regular.otf", "font_size": 152, "x": 44,
+    # `x` is where the ink starts: the same 49px margin as the logo.
+    "name": {"font": "SquidBoyV4-Regular.otf", "font_size": 152, "x": 49,
              "last_baseline": 1278, "line_gap": 132, "max_width": 990,
              "min_font_size": 80},
 
     # Layer 6: the audio-reactive glyph, top-right. Glyph units are pixels at
-    # scale 1. The box is where the glyph sits at rest; it may grow upwards.
+    # scale 1. The box is where the glyph sits at rest. Placed to mirror the
+    # logo: a 49px right margin, centred on the logo's middle (y 103.5).
     "glyph": {
         "mode": "rings",              # rings | bars | line | none
-        "box_x": 900, "box_y": 54, "box_width": 132, "box_height": 64,
+        "box_x": 905, "box_y": 70, "box_width": 132, "box_height": 64,
         "scale": 1.0,
+        # anchor "centre": the coil opens from its middle ring;
+        # "bottom": from the bottom ring upwards (as first built).
         "rings": {"count": 5, "rx": 58, "ry": 10, "points": 110, "stroke": 4.5,
                   "radial_sd": 0.55, "radial_smooth": 3, "vertical_sd": 0.35,
-                  "centre_x": 66, "bottom_y": 52},
+                  "centre_x": 66, "anchor": "centre", "centre_y": 34, "bottom_y": 52},
         "bars": {"count": 4, "bar_width": 14, "spacing": 10, "min_height": 8,
                  "max_height": 60, "rest_heights": [0.55, 0.9, 0.7, 0.45],
                  "bottom_y": 60, "corner": 7},
@@ -98,6 +106,11 @@ DEFAULTS: dict = {
 
     # The ghost "stutter" on each kick.
     "twitch": {"enabled": True, "min_px": 3.0, "max_px": 6.0, "release_ms": 120.0},
+
+    # The hole motif (assets/hole.svg), used instead of the glyph on the 1:1 JPG.
+    # Centred where the coil sits at rest; width in pixels.
+    "hole": {"file": "hole.svg", "width": 122, "offset_x": 0, "offset_y": 0,
+             "glow": True},
 
     # The 1:1 static JPG (SoundCloud). Overrides the 4:5 layout where they differ.
     "square": {"size": 1080, "tape_centre_y": 603, "name_last_baseline": 1008,
@@ -168,6 +181,8 @@ RANGES = {
     "glyph.rings.rx": (1, 1000), "glyph.rings.ry": (0.5, 1000),
     "glyph.rings.stroke": (0.5, 50), "glyph.rings.radial_sd": (0, 20),
     "glyph.rings.radial_smooth": (1, 20), "glyph.rings.vertical_sd": (0, 20),
+    "glyph.rings.centre_y": (-1000, 1000), "glyph.rings.bottom_y": (-1000, 1000),
+    "hole.width": (8, 1000), "hole.offset_x": (-1000, 1000), "hole.offset_y": (-1000, 1000),
     "glyph.bars.count": (1, 8), "glyph.bars.bar_width": (1, 200),
     "glyph.bars.spacing": (0, 200), "glyph.bars.min_height": (0, 1000),
     "glyph.bars.max_height": (1, 1000), "glyph.bars.corner": (0, 100),
@@ -209,9 +224,14 @@ def validate(cfg: dict) -> dict:
     for path in ("canvas.width", "canvas.height", "square.size", "export.preview_width"):
         if int(_get(cfg, path)) % 2:
             raise ConfigError(f"{path} must be an even number (video needs that).")
-    for name, value in cfg["colours"].items():
-        if not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
-            raise ConfigError(f"colours.{name} must look like #fffe01.")
+    for group in ("colours", "accents"):
+        for name, value in cfg[group].items():
+            if not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+                raise ConfigError(f"{group}.{name} must look like #fffe01.")
+    if cfg["accent"] not in cfg["accents"]:
+        raise ConfigError(f"accent must be one of: {', '.join(cfg['accents'])}.")
+    if cfg["glyph"]["rings"]["anchor"] not in ("centre", "bottom"):
+        raise ConfigError("glyph.rings.anchor must be centre or bottom.")
     if not cfg["tape"]["text"].strip():
         raise ConfigError("tape.text can't be empty.")
     a = cfg["audio"]
