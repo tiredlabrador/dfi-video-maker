@@ -79,12 +79,6 @@ def test_rings_spread_evenly_either_side_of_the_middle(cfg):
             assert ring[:, 1].mean() == pytest.approx(centre + (i - 2) * gap, abs=0.4)
 
 
-def test_the_old_bottom_up_growth_is_still_available(cfg):
-    cfg["glyph"]["rings"]["anchor"] = "bottom"
-    g = Glyph(cfg, "02.01")
-    assert np.allclose(g.ring_points(gap=2)[4], g.ring_points(gap=18)[4])
-
-
 def test_each_ring_has_its_own_wobble_and_start_angle(cfg):
     g = Glyph(cfg, "02.01")
     rc = cfg["glyph"]["rings"]

@@ -121,7 +121,6 @@ def test_the_defaults_pass_their_own_checks():
     ({"ghost": {"opacity": 2}}, "ghost.opacity"),
     ({"accents": {"yellow": "yellow"}}, "accents.yellow"),
     ({"accent": "purple"}, "accent"),
-    ({"glyph": {"rings": {"anchor": "sideways"}}}, "anchor"),
     ({"tape": {"text": "   "}}, "tape.text"),
     ({"audio": {"gap_low": 20}}, "gap"),
     ({"twitch": {"min_px": 9, "max_px": 3}}, "twitch"),

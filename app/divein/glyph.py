@@ -67,52 +67,40 @@ class Glyph:
 
     def ring_points(self, gap: float) -> list[np.ndarray]:
         """
-        Each ring's outline in glyph units, stacked with the given gap.
-
-        Anchored at the middle ring by default, so the coil opens and closes
-        evenly up and down; or at the bottom ring, growing upwards.
+        Each ring's outline in glyph units, stacked with the given gap and
+        anchored at the middle ring, so the coil opens evenly up and down.
         """
         rc = self.g["rings"]
-        count = len(self._rings)
-        out = []
-        for i, shape in enumerate(self._rings):
-            if rc["anchor"] == "bottom":
-                cy = rc["bottom_y"] - (count - 1 - i) * gap
-            else:
-                cy = rc["centre_y"] + (i - (count - 1) / 2) * gap
-            out.append(shape + np.array([rc["centre_x"], cy]))
-        return out
+        middle = (len(self._rings) - 1) / 2
+        return [shape + np.array([rc["centre_x"], rc["centre_y"] + (i - middle) * gap])
+                for i, shape in enumerate(self._rings)]
 
     def rest_state(self) -> dict:
         """The coil with no music: the at-rest look."""
         return {"gap": self.cfg["audio"]["gap_rest"], "glow": 0.0}
 
     # ── drawing ──────────────────────────────────────────────────────────
-    def render(self, state: dict, scale: float = 1.0, origin=None):
-        """
-        Draw the coil. Returns (RGBA tile, (x, y) on the canvas), or None.
-
-        `origin` overrides where the glyph box sits (defaults to box_x, box_y).
-        """
+    def render(self, state: dict):
+        """Draw the coil. Returns (RGBA tile, (x, y) on the canvas), or None."""
         if self.mode == "none":
             return None
         gap = round(float(state["gap"]) / GAP_STEP) * GAP_STEP
         glow_t = round(float(np.clip(state.get("glow", 0.0), 0, 1)) * 40) / 40
-        key = (gap, glow_t, scale, origin)
+        key = (gap, glow_t)
         if key not in self._drawn:
             if len(self._drawn) > 400:
                 self._drawn.clear()
-            self._drawn[key] = self._draw(gap, glow_t, scale, origin)
+            self._drawn[key] = self._draw(gap, glow_t)
         return self._drawn[key]
 
-    def _draw(self, gap: float, t: float, scale: float, origin):
-        s = scale * self.g["scale"]
-        ox, oy = origin if origin is not None else (self.g["box_x"], self.g["box_y"])
+    def _draw(self, gap: float, t: float):
+        s = self.g["scale"]
+        ox, oy = self.g["box_x"], self.g["box_y"]
         shapes = [np.vstack([p, p[:1]]) for p in self.ring_points(gap)]
         stroke = self.g["rings"]["stroke"]
 
         glow = self.g["glow"]
-        blur = (glow["blur"] + (glow["peak_blur"] - glow["blur"]) * t) * scale
+        blur = glow["blur"] + (glow["peak_blur"] - glow["blur"]) * t
         alpha = glow["alpha"] + (glow["peak_alpha"] - glow["alpha"]) * t
 
         # Bounds of everything to be drawn, in canvas pixels, with room for glow.

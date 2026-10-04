@@ -1,75 +1,32 @@
 # DFI Video Maker
 
-Turns a Google Sheet of track recommendations into Instagram videos for the DFI
-(Don't Fall In) crate-digging series.
+Makes Instagram videos for DFI (Don't Fall In), on your own Mac:
 
-Each video: the track's cover art spinning like a vinyl record — centre spindle
-hole, motion blur — with the DFI logo top-left, the track title and artist burnt
-in bottom-left, over a 25-second clip of the audio. **1080×1350 (4:5)**, H.264,
-AAC stereo.
+- **The Dig** — a track's cover art spinning like a vinyl record, with the DFI
+  logo, title and artist, over a 25-second clip. One track or a whole batch.
+- **Dive In** — the mix series: a treated photo of the DJ, hazard tape with the
+  episode number, and a ring coil that moves with the music. A 4:5 video per
+  clip plus a 1:1 JPG for SoundCloud.
 
-Three pieces:
+Both are 1080×1350, H.264, AAC stereo. Start the app with `./run`; it opens in
+your browser and pulls the latest version from GitHub each time.
 
-- **`generate_video.py`** — the render engine. Pure and importable; `render_video()`
-  is the entry point and every setting lives on a `RenderConfig`. **Both front
-  doors below use this same file**, so they cannot drift apart in what they produce.
-- **`app/`** — a local web app. Runs on your own Mac, opens in your browser, and
-  gives you a real interface: drop in tracks, check the artwork, render one or a
-  whole batch, download. Start it with `./run`. See **`INSTALL.md`**.
-- **`app/divein/`** — **Dive In Series** mix videos: a photo, hazard tape and an
-  audio-reactive ring coil, as a 4:5 MP4 per clip plus a 1:1 JPG for SoundCloud.
-  Open it from the "Dive In" tab; pick clips by clicking on the mix's timeline.
-  Every number lives in `app/divein/config.py` and can be overridden from the
-  Tuning box on the page. Needs the Squid Boy V4 fonts in `assets/fonts`.
-- **`DFI_batch_render.ipynb`** — the original Google Colab notebook: reads the
-  sheet, pulls files from Drive, renders, uploads, builds a Spotify playlist.
+## What's where
 
-The notebook **downloads the engine from this repo at run time**, so improvements
-ship by pushing here — no re-uploading the notebook. The local app updates itself
-the same way, pulling from GitHub every time it starts.
+- **`generate_video.py`** — The Dig's render engine. Also used by the old Colab
+  notebook (`DFI_batch_render.ipynb`), which downloads it from this repo at run
+  time — so both always produce the same videos.
+- **`app/`** — the local web app: the server and The Dig's page.
+- **`app/divein/`** — Dive In. Every number lives in `app/divein/config.py` and
+  can be overridden from the Tuning box on the page.
+- **`assets/`** — the logo overlays, fallback artwork and the hole motif. The
+  licensed fonts go in `assets/fonts` and are never committed.
 
-### Which one to use
+## Using it
 
-**Use the local app.** Videos are made from track files on your own machine —
-that is the design, not a limitation. The Google Sheet is a place to keep links
-and notes; the app does not read it and does not need to.
-
-The notebook still does the full sheet-to-Drive round trip and still works. It
-is the fallback, and is no longer being developed.
-
----
-
-## Using it (the team)
-
-See **`TEAM_GUIDE.md`**. Short version: fill in the sheet, drop the audio in the
-shared Drive folder, open the notebook, Run all, answer two yes/no questions.
-
-## What a run does
-
-1. **Drop folder** — matches audio dropped in the shared folder to rows still
-   waiting for audio, writes the Drive links into the sheet, files the audio into
-   a per-batch subfolder. *Asks first.*
-2. **Pre-flight** — validates every flagged row **before** downloading anything.
-   Blocks on unusable clip starts or malformed links.
-3. **Artwork check** — downloads audio in parallel, works out which artwork each
-   track will use, shows them all in one grid.
-4. **Confirm** — yes/no, in its own cell.
-5. **Render + upload** — numbered MP4s (`01 …`, `02 …`) into a Drive subfolder
-   named after the tab, so they sort in sheet order.
-6. **Spotify** — creates or updates a playlist from the sheet's Spotify links.
-
-## The sheet
-
-Columns the tool reads — **all configurable in the notebook** if they get renamed:
-
-`Track` · `Artist` · `Drive audio file` · `Drive artwork file*` · `Clip start` ·
-`Render?` · `Spotify link`
-
-`Clip start` is `mm:ss`. Only `Render? = TRUE` rows render. Blank clip start
-warns and begins at 0:00; an unreadable one blocks the run.
-
-Artwork is resolved in this order: **override** from the sheet → **embedded** in
-the audio file → the **DFI fallback label** → otherwise the row is skipped.
+Setup: `INSTALL.md`. How to make each kind of video: `TEAM_GUIDE.md`. The
+Colab notebook and the sheet it reads: `docs/COLAB_GUIDE.md`. Plans and
+decisions: `BACKLOG.md`.
 
 ---
 

@@ -76,16 +76,17 @@ version from GitHub first. Whatever Dom has pushed is what you get.
 
 ---
 
-## The font
+## The fonts
 
-The videos use the brand font, **Squid Boy**. It's a licensed font, so it can't
-be included in a public repo — it isn't in the download.
+The videos use the brand font, **Squid Boy**. It's licensed, so it can't be in
+the public download. Ask Dom for these two files and put them in the
+`assets/fonts` folder inside `dfi-video-maker`:
 
-Without it the app still works, but captions come out in a default font instead.
-To fix that, put `SquidBoy.otf` into the `assets/fonts` folder inside
-`dfi-video-maker`. Ask Dom for the file.
+- `SquidBoy.otf` — for The Dig
+- `SquidBoyV4-Regular.otf` — for Dive In
 
----
+Without them the app still works, but text comes out in a substitute font. The
+app says so at the top of the page if either is missing.
 
 ## When something goes wrong
 
@@ -97,7 +98,7 @@ closed. Double-click `run` again.
 **"command not found: git"** — paste `xcode-select --install` and press return,
 accept the prompt, wait for it to finish, then try again.
 
-**Captions are in the wrong font** — see *The font* above.
+**Text is in the wrong font** — see *The fonts* above.
 
 **Anything else** — copy whatever the Terminal window says and send it to Dom.
 The error text is the useful bit.

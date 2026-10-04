@@ -66,13 +66,12 @@ DEFAULTS: dict = {
     # logo: a 49px right margin, centred on the logo's middle (y 103.5).
     "glyph": {
         "mode": "rings",              # rings | none
-        "box_x": 905, "box_y": 70, "box_width": 132, "box_height": 64,
-        "scale": 1.0,
-        # anchor "centre": the coil opens from its middle ring;
-        # "bottom": from the bottom ring upwards (as first built).
+        "box_x": 905, "box_y": 70, "scale": 1.0,
+        # The coil opens and closes from its middle ring, at (centre_x, centre_y)
+        # within the box.
         "rings": {"count": 5, "rx": 58, "ry": 10, "points": 110, "stroke": 4.5,
                   "radial_sd": 0.55, "radial_smooth": 3, "vertical_sd": 0.35,
-                  "centre_x": 66, "anchor": "centre", "centre_y": 34, "bottom_y": 52},
+                  "centre_x": 66, "centre_y": 34},
         "glow": {"blur": 6.0, "alpha": 0.6, "peak_blur": 8.0, "peak_alpha": 0.8},
     },
 
@@ -179,12 +178,12 @@ RANGES = {
     "tape.texture_mix": (0, 1), "tape.texture_grey": (0, 1), "tape.texture_grain": (0, 4),
     "name.font_size": (8, 400), "name.min_font_size": (8, 400),
     "name.max_width": (50, 4000), "name.line_gap": (0, 1000),
-    "glyph.box_width": (1, 2000), "glyph.box_height": (1, 2000), "glyph.scale": (0.1, 10),
+    "glyph.scale": (0.1, 10),
     "glyph.rings.count": (1, 12), "glyph.rings.points": (8, 1000),
     "glyph.rings.rx": (1, 1000), "glyph.rings.ry": (0.5, 1000),
     "glyph.rings.stroke": (0.5, 50), "glyph.rings.radial_sd": (0, 20),
     "glyph.rings.radial_smooth": (1, 20), "glyph.rings.vertical_sd": (0, 20),
-    "glyph.rings.centre_y": (-1000, 1000), "glyph.rings.bottom_y": (-1000, 1000),
+    "glyph.rings.centre_y": (-1000, 1000),
     "hole.width": (8, 1000), "hole.offset_x": (-1000, 1000), "hole.offset_y": (-1000, 1000),
     "glyph.glow.blur": (0, 50), "glyph.glow.peak_blur": (0, 50),
     "glyph.glow.alpha": (0, 1), "glyph.glow.peak_alpha": (0, 1),
@@ -230,8 +229,6 @@ def validate(cfg: dict) -> dict:
         raise ConfigError(f"accent must be one of: {', '.join(cfg['accents'])}.")
     if cfg["audio"]["drive"] not in ("kicks", "level"):
         raise ConfigError("audio.drive must be kicks or level.")
-    if cfg["glyph"]["rings"]["anchor"] not in ("centre", "bottom"):
-        raise ConfigError("glyph.rings.anchor must be centre or bottom.")
     if not cfg["tape"]["text"].strip():
         raise ConfigError("tape.text can't be empty.")
     a = cfg["audio"]

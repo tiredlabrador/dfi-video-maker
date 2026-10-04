@@ -492,11 +492,7 @@ class Scene:
             mask = hole_mask(path, int(h["width"]))
             rc = g["rings"]
             cx = g["box_x"] + rc["centre_x"] * g["scale"] + h["offset_x"]
-            if rc["anchor"] == "bottom":
-                mid = rc["bottom_y"] - (rc["count"] - 1) / 2 * self.cfg["audio"]["gap_rest"]
-            else:
-                mid = rc["centre_y"]
-            cy = g["box_y"] + mid * g["scale"] + h["offset_y"]
+            cy = g["box_y"] + rc["centre_y"] * g["scale"] + h["offset_y"]
             glow = g["glow"]
             pad = int(3 * glow["blur"]) + 2 if h["glow"] else 0
             m = Image.new("L", (mask.width + 2 * pad, mask.height + 2 * pad), 0)
