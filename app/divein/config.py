@@ -65,7 +65,7 @@ DEFAULTS: dict = {
     # scale 1. The box is where the glyph sits at rest. Placed to mirror the
     # logo: a 49px right margin, centred on the logo's middle (y 103.5).
     "glyph": {
-        "mode": "rings",              # rings | bars | line | none
+        "mode": "rings",              # rings | none
         "box_x": 905, "box_y": 70, "box_width": 132, "box_height": 64,
         "scale": 1.0,
         # anchor "centre": the coil opens from its middle ring;
@@ -73,12 +73,6 @@ DEFAULTS: dict = {
         "rings": {"count": 5, "rx": 58, "ry": 10, "points": 110, "stroke": 4.5,
                   "radial_sd": 0.55, "radial_smooth": 3, "vertical_sd": 0.35,
                   "centre_x": 66, "anchor": "centre", "centre_y": 34, "bottom_y": 52},
-        "bars": {"count": 4, "bar_width": 14, "spacing": 10, "min_height": 8,
-                 "max_height": 60, "rest_heights": [0.55, 0.9, 0.7, 0.45],
-                 "bottom_y": 60, "corner": 7},
-        "line": {"width": 116, "centre_y": 32, "max_amplitude": 26,
-                 "window_ms": 40, "smooth": 3, "stroke": 4.5, "rest_amplitude": 3,
-                 "min_scale": 0.25},
         "glow": {"blur": 6.0, "alpha": 0.6, "peak_blur": 8.0, "peak_alpha": 0.8},
     },
 
@@ -125,9 +119,10 @@ DEFAULTS: dict = {
                "jpg_quality": 92},
 
     # max_mbps caps the bitrate: grain is nearly incompressible, and uncapped a
-    # 25s clip is ~126MB. 16 keeps ~95% of the grain at ~52MB; 10 keeps ~85%
-    # at ~33MB. Instagram re-compresses well below either.
-    "export": {"crf": 18, "preset": "medium", "max_mbps": 16.0,
+    # 25s clip is well over 100MB. 12 gives roughly 30-40MB and keeps most of
+    # the grain; 16 keeps a little more at ~50MB. Instagram re-compresses well
+    # below either, which softens grain whatever is uploaded.
+    "export": {"crf": 18, "preset": "medium", "max_mbps": 12.0,
                "preview_seconds": 8.0, "preview_width": 540},
 }
 
@@ -191,12 +186,6 @@ RANGES = {
     "glyph.rings.radial_smooth": (1, 20), "glyph.rings.vertical_sd": (0, 20),
     "glyph.rings.centre_y": (-1000, 1000), "glyph.rings.bottom_y": (-1000, 1000),
     "hole.width": (8, 1000), "hole.offset_x": (-1000, 1000), "hole.offset_y": (-1000, 1000),
-    "glyph.bars.count": (1, 8), "glyph.bars.bar_width": (1, 200),
-    "glyph.bars.spacing": (0, 200), "glyph.bars.min_height": (0, 1000),
-    "glyph.bars.max_height": (1, 1000), "glyph.bars.corner": (0, 100),
-    "glyph.line.width": (1, 2000), "glyph.line.max_amplitude": (0, 1000),
-    "glyph.line.window_ms": (1, 1000), "glyph.line.smooth": (1, 50),
-    "glyph.line.stroke": (0.5, 50), "glyph.line.min_scale": (0, 1),
     "glyph.glow.blur": (0, 50), "glyph.glow.peak_blur": (0, 50),
     "glyph.glow.alpha": (0, 1), "glyph.glow.peak_alpha": (0, 1),
     "audio.clip_seconds": (0.5, 120), "audio.sample_rate": (8000, 192000),
@@ -257,16 +246,10 @@ def validate(cfg: dict) -> dict:
         raise ConfigError("audio.kick_low_hz must be below audio.kick_high_hz.")
     if cfg["twitch"]["min_px"] > cfg["twitch"]["max_px"]:
         raise ConfigError("twitch.min_px must not be more than twitch.max_px.")
-    bars = cfg["glyph"]["bars"]
-    if len(bars["rest_heights"]) != int(bars["count"]):
-        raise ConfigError(f"glyph.bars.rest_heights needs one value per bar "
-                          f"({int(bars['count'])}).")
-    if bars["min_height"] > bars["max_height"]:
-        raise ConfigError("glyph.bars.min_height must not be more than max_height.")
     if cfg["export"]["preset"] not in PRESETS:
         raise ConfigError(f"export.preset must be one of: {', '.join(PRESETS)}.")
-    if cfg["glyph"]["mode"] not in ("rings", "bars", "line", "none"):
-        raise ConfigError("glyph.mode must be rings, bars, line or none.")
+    if cfg["glyph"]["mode"] not in ("rings", "none"):
+        raise ConfigError("glyph.mode must be rings or none.")
     return cfg
 
 

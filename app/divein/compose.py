@@ -8,8 +8,7 @@ Layers, bottom to top:
   4. vignette — darkened edges
   5. the hazard tape (textured like R1), its text
   6. the DFI logo and the artist name
-  7. the glyph (rings, bars or line)
-  8. the debug read-out, when asked for
+  7. the coil (or, on the 1:1 JPG, the hole motif)
 
 Speed comes from doing the slow work once. The photo layers are prepared when
 the scene is built; each grain variation is composited once and reused. A
@@ -195,6 +194,41 @@ def _soft_light(base, top, opacity):
     return base + opacity * (light - base)
 
 
+def _blend(out: np.ndarray, tile: Image.Image, pos) -> None:
+    """Lay a straight-alpha RGBA tile onto an RGB array in place (clipped)."""
+    x, y = pos
+    t = np.asarray(tile)
+    H, W = out.shape[:2]
+    x0, y0, x1, y1 = max(0, x), max(0, y), min(W, x + t.shape[1]), min(H, y + t.shape[0])
+    if x0 >= x1 or y0 >= y1:
+        return
+    t = t[y0 - y:y1 - y, x0 - x:x1 - x].astype(np.float32)
+    a = t[..., 3:4] / 255.0
+    region = out[y0:y1, x0:x1].astype(np.float32)
+    out[y0:y1, x0:x1] = np.clip(np.round(t[..., :3] * a + region * (1 - a)), 0, 255)
+
+
+def _split_into_pieces(overlay: Image.Image):
+    """
+    Cut a mostly-empty full-canvas layer into the strips that hold anything
+    (here: the logo at the top, the name at the bottom). Pasting two small
+    pieces is much quicker than pasting a whole transparent canvas.
+    """
+    alpha = np.asarray(overlay)[..., 3]
+    used = np.nonzero(alpha.any(axis=1))[0]
+    if used.size == 0:
+        return []
+    pieces, start = [], used[0]
+    for a, b in zip(used, list(used[1:]) + [None]):
+        if b is None or b - a > 40:
+            cols = np.nonzero(alpha[start:a + 1].any(axis=0))[0]
+            box = (int(cols[0]), int(start), int(cols[-1]) + 1, int(a) + 1)
+            pieces.append((overlay.crop(box), (box[0], box[1])))
+            if b is not None:
+                start = b
+    return pieces
+
+
 # ── the scene ────────────────────────────────────────────────────────────
 class Scene:
     """Everything about one design that doesn't change frame to frame."""
@@ -217,6 +251,8 @@ class Scene:
         self._background_cache: dict[int, np.ndarray] = {}
         self._grain_sequence: list[int] = []
         self._hole_tile = None
+        self._tape_cache: dict = {}
+        self._overlay_pieces = _split_into_pieces(self._overlay)
 
     # ── preparation ──────────────────────────────────────────────────────
     def _prepare_photo(self, photo: Image.Image, crop: dict | None) -> None:
@@ -354,8 +390,40 @@ class Scene:
         return self._grain_cache[k].astype(np.float32) / 255.0
 
     # ── composition ──────────────────────────────────────────────────────
+    def _tape_layer(self, k: int):
+        """
+        The tape for grain variation k: a straight-alpha RGBA strip covering
+        just the rows the tape crosses, plus where it goes. Kept per variation,
+        since the texture follows the grain.
+        """
+        if k not in self._tape_cache:
+            tp = self.cfg["tape"]
+            rows = np.nonzero(self._tape_alpha.any(axis=1))[0]
+            if not tp["enabled"] or rows.size == 0:
+                self._tape_cache[k] = None
+                return None
+            r0, r1 = int(rows[0]), int(rows[-1]) + 1
+            ta = self._tape_alpha[r0:r1]
+            xa = self._text_alpha[r0:r1]
+            accent = np.array(accent_rgb(self.cfg), dtype=np.float32) / 255.0
+            mix = tp["texture_mix"]
+            if self.cfg["grain"]["enabled"]:
+                n = self._grain(k)[r0:r1]
+                tex = (tp["texture_grey"] + (n - 0.5) * tp["texture_grain"])[..., None]
+            else:
+                tex = tp["texture_grey"]
+            colour = accent * (1.0 - mix) + mix * tex
+            colour = np.broadcast_to(colour, ta.shape + (3,))
+            # Black text sits inside the tape: darken by the share it covers.
+            ink = np.where(ta > 0, xa / np.maximum(ta, 1e-6), 0.0)[..., None]
+            rgba = np.empty(ta.shape + (4,), dtype=np.uint8)
+            rgba[..., :3] = np.clip(np.round(colour * (1.0 - ink) * 255), 0, 255)
+            rgba[..., 3] = np.clip(np.round(ta * 255), 0, 255)
+            self._tape_cache[k] = (Image.fromarray(rgba, "RGBA"), (0, r0))
+        return self._tape_cache[k]
+
     def _background(self, k: int, twitch=(0, 0)) -> np.ndarray:
-        """Everything below the glyph, as an HxWx3 uint8 array."""
+        """Everything below the coil, as an HxWx3 uint8 array."""
         tx, ty = int(round(twitch[0])), int(round(twitch[1]))
         cacheable = (tx, ty) == (0, 0)
         if cacheable and k in self._background_cache:
@@ -369,30 +437,20 @@ class Scene:
             M = self.M
             ghost = self._ghost[M - dy:M - dy + self.H, M - dx:M - dx + self.W]
             value = _screen(value, ghost, g["opacity"])
-        grain = self._grain(k) if cfg["grain"]["enabled"] else None
-        if grain is not None:
-            value = _soft_light(value, grain, cfg["grain"]["opacity"])
+        if cfg["grain"]["enabled"]:
+            value = _soft_light(value, self._grain(k), cfg["grain"]["opacity"])
         value = value * self._vignette
-        rgb = np.repeat(value[..., None], 3, axis=2)
 
-        tp = cfg["tape"]
-        if tp["enabled"]:
-            accent = np.array(accent_rgb(cfg), dtype=np.float32) / 255.0
-            mix = tp["texture_mix"]
-            n = grain if grain is not None else 0.5
-            tex = tp["texture_grey"] + (n - 0.5) * tp["texture_grain"]
-            if np.ndim(tex):
-                tex = tex[..., None]
-            colour = accent * (1.0 - mix) + mix * tex
-            ta = self._tape_alpha[..., None]
-            rgb = rgb * (1.0 - ta) + colour * ta
-            black = np.array(hex_to_rgb(cfg["colours"]["black"]), dtype=np.float32) / 255.0
-            xa = self._text_alpha[..., None]
-            rgb = rgb * (1.0 - xa) + black * xa
-
-        out = np.clip(np.round(rgb * 255.0), 0, 255).astype(np.uint8)
-        img = Image.fromarray(out, "RGB")
-        img.paste(self._overlay, (0, 0), self._overlay)
+        # Greyscale until here; Pillow turns it to RGB and lays the coloured
+        # layers on top far faster than doing it as floating-point maths.
+        grey = np.clip(np.round(value * 255.0), 0, 255).astype(np.uint8)
+        img = Image.fromarray(grey, "L").convert("RGB")
+        tape = self._tape_layer(k)
+        if tape is not None:
+            strip, pos = tape
+            img.paste(strip, pos, strip)
+        for piece, pos in self._overlay_pieces:
+            img.paste(piece, pos, piece)
         out = np.asarray(img)
         if cacheable:
             self._background_cache[k] = out
@@ -402,33 +460,24 @@ class Scene:
         if analysis is None:
             return self.glyph.rest_state()
         f = min(frame, len(analysis["gap"]) - 1)
-        state = {"gap": float(analysis["gap"][f]), "glow": float(analysis["glow"][f]),
-                 "bands": list(analysis["bands"][f]), "wave": None,
-                 "level": float(analysis["level"][f])}
-        if self.glyph.mode == "line":
-            mono, sr = analysis["mono"], analysis["sample_rate"]
-            end = int((f + 1) * sr / self.fps)
-            span = int(self.cfg["glyph"]["line"]["window_ms"] / 1000.0 * sr)
-            state["wave"] = mono[max(0, end - span):end]
-        return state
+        return {"gap": float(analysis["gap"][f]), "glow": float(analysis["glow"][f])}
 
-    def frame(self, f: int, analysis: dict | None = None, debug: bool = False) -> Image.Image:
-        """Frame `f` of the clip. With no analysis: the at-rest look (the still)."""
+    def frame_array(self, f: int, analysis: dict | None = None) -> np.ndarray:
+        """Frame `f` as an HxWx3 array. With no analysis: the at-rest look."""
         twitch = (0, 0)
         if analysis is not None:
             i = min(f, len(analysis["gap"]) - 1)
             twitch = (analysis["twitch_x"][i], analysis["twitch_y"][i])
-        bg = self._background(self.grain_index(f), twitch)
-        img = Image.fromarray(bg, "RGB")
-        # The 1:1 JPG always shows the hole motif; the video shows the glyph.
+        out = self._background(self.grain_index(f), twitch).copy()
+        # The 1:1 JPG always shows the hole motif; the video shows the coil.
         drawn = self._hole() if self.fmt == "square" \
             else self.glyph.render(self.glyph_state(f, analysis))
         if drawn is not None:
-            tile, (x, y) = drawn
-            img.paste(tile.convert("RGB"), (x, y), tile)
-        if debug:
-            self._draw_debug(img, f, analysis)
-        return img
+            _blend(out, *drawn)
+        return out
+
+    def frame(self, f: int, analysis: dict | None = None) -> Image.Image:
+        return Image.fromarray(self.frame_array(f, analysis), "RGB")
 
     def _hole(self):
         """The hole motif in the accent colour, centred where the coil rests."""
@@ -492,42 +541,3 @@ class Scene:
             tile, (x, y) = drawn
             img.alpha_composite(tile, (max(0, x), max(0, y)))
         return img
-
-    def _draw_debug(self, img: Image.Image, f: int, analysis: dict | None) -> None:
-        """A read-out of what the analysis is doing on this frame."""
-        draw = ImageDraw.Draw(img, "RGBA")
-        font = ImageFont.load_default(size=22)
-        x0, y0, w, h = 50, 170, 340, 190
-        draw.rectangle([x0, y0, x0 + w, y0 + h], fill=(0, 0, 0, 190))
-        yellow = accent_rgb(self.cfg)
-        if analysis is None:
-            draw.text((x0 + 12, y0 + 12), "at rest (no audio)", font=font, fill="white")
-            return
-        n = len(analysis["gap"])
-        i = min(f, n - 1)
-        kick = bool(analysis["kick"][i])
-        hit = bool(analysis.get("hit", analysis["kick"])[i]) and not kick
-        lines = [f"frame {f}   {f / self.fps:6.2f}s",
-                 f"rms {analysis['rms_db'][i]:6.1f} dB   level {analysis['level'][i]:.2f}",
-                 f"gap {analysis['gap'][i]:5.1f}   glow {analysis['glow'][i]:.2f}"]
-        for row, text in enumerate(lines):
-            draw.text((x0 + 12, y0 + 10 + row * 28), text, font=font, fill="white")
-        if kick or hit:
-            draw.rectangle([x0 + w - 92, y0 + 8, x0 + w - 10, y0 + 40], fill=yellow)
-            draw.text((x0 + w - 82, y0 + 11), "KICK" if kick else "HIT",
-                      font=font, fill="black")
-        # The last two seconds: level (white), gap (yellow), kicks (ticks).
-        gx, gy, gw, gh = x0 + 12, y0 + 100, w - 24, 78
-        span = 2 * self.fps
-        start = max(0, i - span + 1)
-        idx = np.arange(start, i + 1)
-        if idx.size > 1:
-            xs = gx + (idx - start) * gw / (span - 1)
-            lv = gy + gh - analysis["level"][idx] * gh
-            gp = gy + gh - (analysis["gap"][idx] / self.cfg["audio"]["gap_kick"]) * gh
-            draw.line(list(zip(xs, lv)), fill="white", width=2)
-            draw.line(list(zip(xs, gp)), fill=yellow, width=2)
-            for j, k in zip(idx, analysis["kick"][idx]):
-                if k:
-                    xk = gx + (j - start) * gw / (span - 1)
-                    draw.line([(xk, gy), (xk, gy + 12)], fill=yellow, width=3)

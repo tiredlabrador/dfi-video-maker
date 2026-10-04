@@ -116,7 +116,7 @@ def test_the_defaults_pass_their_own_checks():
     ({"canvas": {"width": 0}}, "canvas.width"),
     ({"canvas": {"width": 1081}}, "even"),
     ({"glyph": {"rings": {"count": 0}}}, "glyph.rings.count"),
-    ({"glyph": {"bars": {"count": 0}}}, "glyph.bars.count"),
+    ({"glyph": {"mode": "bars"}}, "rings or none"),
     ({"grain": {"pool": 1000}}, "grain.pool"),
     ({"ghost": {"opacity": 2}}, "ghost.opacity"),
     ({"accents": {"yellow": "yellow"}}, "accents.yellow"),
@@ -125,7 +125,6 @@ def test_the_defaults_pass_their_own_checks():
     ({"tape": {"text": "   "}}, "tape.text"),
     ({"audio": {"gap_low": 20}}, "gap"),
     ({"twitch": {"min_px": 9, "max_px": 3}}, "twitch"),
-    ({"glyph": {"bars": {"count": 3}}}, "rest_heights"),
     ({"export": {"preset": "turbo"}}, "export.preset"),
 ])
 def test_out_of_range_settings_are_refused_with_their_name(override, words):

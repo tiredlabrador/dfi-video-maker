@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dive In (test) — DFI Video Maker</title>
+<title>Dive In — DFI Video Maker</title>
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="/static/divein.css">
 </head>
@@ -17,19 +17,17 @@
 
 <nav class="tabs">
   <a class="tab" href="/">The Dig</a>
-  <a class="tab is-active" href="/static/divein.html" aria-current="page">Dive In (test)</a>
+  <a class="tab is-active" href="/static/divein.html" aria-current="page">Dive In</a>
 </nav>
 
 <main>
   <section class="panel">
-    <p class="test-note">Test area. Settings here don't affect The Dig.</p>
-
     <h2>1 &nbsp;Photo</h2>
     <label class="drop" id="photo-drop" for="photo-input">
       <input type="file" id="photo-input" accept="image/*" hidden>
       <span class="drop-icon" aria-hidden="true">◐</span>
       <span class="drop-text" id="photo-label">Drop a photo here, or click to choose</span>
-      <span class="drop-hint">Any shape. Drag the preview to move it; scroll or pinch to zoom.</span>
+      <span class="drop-hint">Or paste one, or drop it on the preview. Drag the preview to move it; scroll or pinch to zoom.</span>
     </label>
     <div class="field inline" id="zoom-row" hidden>
       <label for="zoom">Zoom</label>
@@ -55,43 +53,53 @@
       <span class="drop-text" id="audio-label">Drop the mix here, or click to choose</span>
       <span class="drop-hint" id="audio-hint">Any length</span>
     </label>
-    <div class="field">
-      <label for="starts">Clip start times</label>
-      <input type="text" id="starts" placeholder="45:10, 1:02:30" autocomplete="off">
-      <p class="hint">One video per start time. Separate them with commas.</p>
+
+    <div class="timeline" id="timeline" hidden>
+      <canvas id="timeline-canvas" height="72"></canvas>
+      <div class="timeline-foot">
+        <span id="timeline-hover" class="hint">Click to add a clip. Drag a clip to move it.</span>
+        <span id="timeline-length" class="hint"></span>
+      </div>
     </div>
-    <div class="field">
-      <label for="clip-seconds">Clip length (seconds)</label>
+    <ul class="clips" id="clips"></ul>
+    <audio id="listen" preload="auto" hidden></audio>
+
+    <details class="advanced type-times">
+      <summary>Type the times instead</summary>
+      <div class="field">
+        <input type="text" id="starts" placeholder="45:10, 1:02:30" autocomplete="off">
+        <p class="hint">One video per start time, separated by commas.</p>
+      </div>
+    </details>
+    <div class="field inline">
+      <label for="clip-seconds">Clip length</label>
       <input type="number" id="clip-seconds" value="25" min="1" max="120" step="1">
+      <span class="hint">seconds</span>
     </div>
 
     <h2>4 &nbsp;Style</h2>
-    <div class="segmented" role="radiogroup" aria-label="Audio glyph" id="glyph-choice">
-      <button type="button" role="radio" data-value="rings" aria-checked="true">Rings</button>
-      <button type="button" role="radio" data-value="bars" aria-checked="false">Bars</button>
-      <button type="button" role="radio" data-value="line" aria-checked="false">Line</button>
-      <button type="button" role="radio" data-value="none" aria-checked="false">None</button>
-    </div>
     <div class="segmented swatches" role="radiogroup" aria-label="Colour" id="colour-choice">
       <button type="button" role="radio" data-value="yellow" aria-checked="true"><i style="background:#fffe01"></i>Yellow</button>
       <button type="button" role="radio" data-value="red" aria-checked="false"><i style="background:#ea2020"></i>Red</button>
       <button type="button" role="radio" data-value="green" aria-checked="false"><i style="background:#3dff00"></i>Green</button>
       <button type="button" role="radio" data-value="white" aria-checked="false"><i style="background:#ffffff"></i>White</button>
     </div>
-    <p class="hint control-label">The rings move with</p>
-    <div class="segmented" role="radiogroup" aria-label="Motion" id="motion-choice">
-      <button type="button" role="radio" data-value="kicks" aria-checked="true">Kick drums</button>
-      <button type="button" role="radio" data-value="level" aria-checked="false">Volume</button>
+    <label class="check"><input type="checkbox" id="rings-on" checked> Show the rings</label>
+    <div id="motion-options">
+      <p class="hint control-label">The rings move with</p>
+      <div class="segmented" role="radiogroup" aria-label="Motion" id="motion-choice">
+        <button type="button" role="radio" data-value="kicks" aria-checked="true">Kick drums</button>
+        <button type="button" role="radio" data-value="level" aria-checked="false">Volume</button>
+      </div>
     </div>
     <label class="check"><input type="checkbox" id="twitch" checked> Ghost twitch on each hit</label>
-    <label class="check"><input type="checkbox" id="debug"> Debug overlay (level, kicks, gap)</label>
 
     <h2>5 &nbsp;Make it</h2>
     <div class="actions">
       <button type="button" class="btn btn--ghost" id="preview-btn">Preview with sound</button>
       <button type="button" class="btn" id="export-btn">Export</button>
     </div>
-    <p class="hint">Preview: a short, small clip from the first start time. Export: full-size MP4s plus the 1:1 JPG.</p>
+    <p class="hint" id="make-hint">Preview: a short, small clip of the selected clip. Export: full-size MP4s plus the 1:1 JPG.</p>
 
     <details class="advanced tuning">
       <summary>Tuning</summary>
@@ -129,7 +137,7 @@
     </div>
 
     <div class="field scrub" id="scrub-row" hidden>
-      <label class="check"><input type="checkbox" id="scrub-on"> Show a moment from the audio</label>
+      <label class="check"><input type="checkbox" id="scrub-on"> Show the rings at a moment in the selected clip</label>
       <input type="range" id="scrub" min="0" max="25" step="0.0333" value="0" disabled>
       <span class="hint" id="scrub-label">at rest</span>
     </div>
@@ -144,6 +152,7 @@
     <div class="results" id="files" hidden>
       <h3>Files</h3>
       <ul id="file-list"></ul>
+      <a class="btn btn--small" id="zip-link" hidden>Download all</a>
     </div>
   </section>
 </main>

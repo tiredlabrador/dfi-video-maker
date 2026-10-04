@@ -27,7 +27,7 @@ def write_wav(samples: np.ndarray, sample_rate: int, path: str) -> None:
 
 def render_video(scene, analysis, samples, sample_rate: int, out_path: str,
                  cfg: dict, seconds: float, width: int | None = None,
-                 debug: bool = False, progress=None) -> str:
+                 progress=None) -> str:
     """
     Render `seconds` of the clip to `out_path`.
 
@@ -76,7 +76,7 @@ def render_video(scene, analysis, samples, sample_rate: int, out_path: str,
                 for f in range(total):
                     if f % 10 == 0:
                         report(0.97 * f / total, "Drawing frames")
-                    yield scene.frame(f, analysis, debug=debug).tobytes()
+                    yield scene.frame_array(f, analysis).tobytes()
             except Exception as exc:                   # noqa: BLE001
                 failure.append(exc)
 

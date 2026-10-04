@@ -65,7 +65,7 @@ def get(server, path):
 def design(photo, audio=None, **kw):
     d = {"photo": photo, "artist": "Artist\nName", "episode": "02.01",
          "crop": {"zoom": 1, "cx": 0.5, "cy": 0.5}, "glyph": "rings",
-         "twitch": True, "debug": False, "overrides": {}}
+         "twitch": True, "overrides": {}}
     if audio:
         d.update(audio=audio, starts="0:05", clip_seconds=1)
     d.update(kw)
@@ -430,3 +430,63 @@ def test_the_motion_can_follow_volume_instead_of_kicks(server, media):
     with pytest.raises(urllib.error.HTTPError) as caught:
         post_json(server, "/api/divein/still", design(p, a, time=1.0, motion="vibes"), raw=True)
     assert caught.value.code == 400
+
+
+@pytest.mark.parametrize("style", ["bars", "line"])
+def test_the_retired_bar_and_line_styles_are_refused(server, media, style):
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        post_json(server, "/api/divein/still", design(p, glyph=style), raw=True)
+    assert caught.value.code == 400
+
+
+# ── making it easier to use ─────────────────────────────────────────────
+@pytest.fixture(scope="module")
+def two_part_mix(tmp_path_factory):
+    """Ten quiet seconds, then ten loud ones."""
+    folder = tmp_path_factory.mktemp("twopart")
+    path = folder / "mix.wav"
+    t = np.arange(20 * 44100) / 44100
+    tone = 0.6 * np.sin(2 * np.pi * 110 * t)
+    tone[: 10 * 44100] *= 0.05
+    from app.divein.render import write_wav
+    write_wav(np.stack([tone, tone], 1).astype(np.float32), 44100, str(path))
+    return path.read_bytes()
+
+
+def test_the_mix_overview_shows_where_it_is_loud(server, two_part_mix):
+    token = raw_upload(server, "audio", "mix.wav", two_part_mix)["token"]
+    data = json.load(get(server, f"/api/divein/overview?audio={token}"))
+    assert data["duration"] == pytest.approx(20, abs=0.1)
+    peaks = data["peaks"]
+    assert 500 <= len(peaks) <= 2000
+    half = len(peaks) // 2
+    assert max(peaks) <= 1.0 and min(peaks) >= 0.0
+    assert np.mean(peaks[half + 5:]) > 5 * np.mean(peaks[: half - 5])
+
+
+def test_the_overview_of_an_unknown_file_is_refused(server):
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        get(server, "/api/divein/overview?audio=nope.mp3")
+    assert caught.value.code == 400
+
+
+def test_the_preview_can_be_of_any_of_the_clips(server):
+    from app.divein.api import DiveInService
+    assert DiveInService._preview_start({"preview_index": 1}, [10.0, 50.0]) == 50.0
+    assert DiveInService._preview_start({}, [10.0, 50.0]) == 10.0
+    assert DiveInService._preview_start({"preview_index": 9}, [10.0, 50.0]) == 10.0
+
+
+def test_all_the_files_download_together(server, media):
+    import zipfile
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    job = post_json(server, "/api/divein/export", design(p, a, starts="0:02, 0:10"))
+    done = wait(server, job["id"])
+    assert done["zip_url"]
+    archive = zipfile.ZipFile(io.BytesIO(get(server, done["zip_url"]).read()))
+    names = archive.namelist()
+    assert sum(n.endswith(".mp4") for n in names) == 2 and sum(n.endswith(".jpg") for n in names) == 1

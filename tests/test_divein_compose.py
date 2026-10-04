@@ -340,7 +340,7 @@ def test_a_phone_photo_is_turned_the_right_way_up(tmp_path):
     assert load_photo(str(path)).size == (300, 400)
 
 
-# ── reactive bits and debug ─────────────────────────────────────────────
+# ── reactive bits ─────────────────────────────────────────────────────
 def fake_analysis(n=90, kick_at=30):
     gap = np.full(n, 9.0); gap[kick_at:kick_at + 3] = 18.0
     tx = np.zeros(n); ty = np.zeros(n); tx[kick_at] = 5.0
@@ -371,15 +371,6 @@ def test_the_ghost_twitches_on_a_kick(cfg, colourful_photo):
     assert not np.array_equal(plain, nudged)
 
 
-def test_the_debug_overlay_shows_up_only_when_asked(cfg, black_photo):
-    s = scene(cfg, black_photo)
-    a = fake_analysis()
-    off = np.asarray(s.frame(30, a))
-    on = np.asarray(s.frame(30, a, debug=True))
-    assert not np.array_equal(off, on)
-    assert np.array_equal(off, np.asarray(s.frame(30, a, debug=False)))
-
-
 def test_a_16_bit_photo_is_not_turned_white(tmp_path):
     path = tmp_path / "deep.png"
     Image.fromarray(np.full((400, 300), 32768, dtype=np.uint16)).save(path)
@@ -388,7 +379,7 @@ def test_a_16_bit_photo_is_not_turned_white(tmp_path):
 
 
 # ── the square JPG uses the hole motif ──────────────────────────────────
-@pytest.mark.parametrize("mode", ["rings", "bars", "line", "none"])
+@pytest.mark.parametrize("mode", ["rings", "none"])
 def test_the_square_jpg_shows_the_hole_motif_whatever_the_glyph(cfg, black_photo, mode):
     """Dom: the still JPG uses the hole motif, never the waveform or coil."""
     cfg["glyph"]["mode"] = mode

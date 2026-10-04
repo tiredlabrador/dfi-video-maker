@@ -73,20 +73,6 @@ def test_progress_is_reported_to_the_end(setup):
     assert seen == sorted(seen) and seen[-1] == pytest.approx(1.0)
 
 
-def test_the_debug_overlay_can_be_burnt_in(setup):
-    cfg, scene, samples, analysis, tmp = setup
-    plain, debug = tmp / "p.mp4", tmp / "d.mp4"
-    render_video(scene, analysis, samples, SR, str(plain), cfg, seconds=0.5)
-    render_video(scene, analysis, samples, SR, str(debug), cfg, seconds=0.5, debug=True)
-    def frame0(path):
-        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1",
-                              "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"],
-                             capture_output=True, check=True).stdout
-        return np.frombuffer(raw, np.uint8).reshape(1350, 1080)
-    assert np.abs(frame0(plain)[170:360, 50:390].astype(int)
-                  - frame0(debug)[170:360, 50:390].astype(int)).mean() > 5
-
-
 def test_the_square_still_is_a_1080_jpg(setup, tmp_path):
     cfg = merge_config({})
     photo = tmp_path / "s.jpg"

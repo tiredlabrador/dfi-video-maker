@@ -203,30 +203,6 @@ def _attack_start(outline: np.ndarray, i: int, hop: int, win: int, sr: int) -> f
     return (a + first) / sr
 
 
-def _bands(mono: np.ndarray, sr: int, fps: int, n_frames: int, count: int,
-           lo_pct: float, hi_pct: float) -> np.ndarray:
-    """Per-frame level in `count` frequency bands, each scaled 0..1."""
-    edges = np.geomspace(40, 12000, count + 1)
-    n_fft = 2048
-    window = np.hanning(n_fft)
-    freqs = np.fft.rfftfreq(n_fft, 1.0 / sr)
-    per = sr / fps
-    padded = np.pad(mono, n_fft)
-    db = np.empty((n_frames, count))
-    for f in range(n_frames):
-        centre = int((f + 0.5) * per) + n_fft
-        seg = padded[centre - n_fft // 2: centre + n_fft // 2] * window
-        power = np.abs(np.fft.rfft(seg)) ** 2
-        for b in range(count):
-            mask = (freqs >= edges[b]) & (freqs < edges[b + 1])
-            db[f, b] = 10 * math.log10(float(power[mask].sum()) + 1e-12)
-    out = np.empty_like(db)
-    for b in range(count):
-        lo, hi = np.percentile(db[:, b], [lo_pct, hi_pct])
-        out[:, b] = np.clip((db[:, b] - lo) / max(hi - lo, 1.0), 0, 1)
-    return out
-
-
 def _volume_hits(rms_db: np.ndarray, level: np.ndarray, silent: np.ndarray,
                  fps: int, cfg: dict) -> np.ndarray:
     """
@@ -277,8 +253,7 @@ def analyse(samples: np.ndarray, sr: int, fps: int, cfg: dict,
     Everything the renderer needs, one value per video frame.
 
     Returns arrays: rms_db, level (0..1), kick (bool), gap, glow (0..1),
-    twitch_x, twitch_y, bands (frames x bars), plus the mono samples (for the
-    line waveform).
+    twitch_x, twitch_y, and hit (what triggers the twitch).
     """
     a = cfg["audio"]
     mono = samples.mean(axis=1).astype(np.float64) if samples.ndim == 2 \
@@ -307,16 +282,9 @@ def analyse(samples: np.ndarray, sr: int, fps: int, cfg: dict,
     glow = np.clip((gap - a["gap_rest"]) / max(a["gap_kick"] - a["gap_rest"], 1e-6),
                    0.0, 1.0)
 
-    bars = cfg["glyph"]["bars"]["count"]
-    bands = _bands(mono, sr, fps, n_frames, bars, a["rms_low_pct"], a["rms_high_pct"])
-    bands[kicks, 0] = 1.0
-    for b in range(bars):
-        bands[:, b] = smooth_envelope(bands[:, b], a["attack_frames"], release_frames)
-    bands[silent] = 0.0
-
     # The twitch fires on kicks, or in volume mode on sudden loudness jumps.
     hits = _volume_hits(rms_db, level, silent, fps, cfg) if by_level else kicks
     tx, ty = _twitch(hits, fps, cfg, episode)
     return {"rms_db": rms_db, "level": level, "kick": kicks, "hit": hits, "gap": gap,
-            "glow": glow, "twitch_x": tx, "twitch_y": ty, "bands": bands,
-            "mono": mono.astype(np.float32), "sample_rate": sr, "fps": fps}
+            "glow": glow, "twitch_x": tx, "twitch_y": ty,
+            "sample_rate": sr, "fps": fps}

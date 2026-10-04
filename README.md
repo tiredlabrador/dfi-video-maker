@@ -16,11 +16,11 @@ Three pieces:
 - **`app/`** — a local web app. Runs on your own Mac, opens in your browser, and
   gives you a real interface: drop in tracks, check the artwork, render one or a
   whole batch, download. Start it with `./run`. See **`INSTALL.md`**.
-- **`app/divein/`** — a **test area** for "Dive In Series" mix videos (photo,
-  hazard tape, an audio-reactive ring glyph). Separate from The Dig; open it from
-  the "Dive In (test)" tab. Every number lives in `app/divein/config.py`, and can
-  be overridden from the Tuning box on the page. Needs the Squid Boy V4 fonts in
-  `assets/fonts`.
+- **`app/divein/`** — **Dive In Series** mix videos: a photo, hazard tape and an
+  audio-reactive ring coil, as a 4:5 MP4 per clip plus a 1:1 JPG for SoundCloud.
+  Open it from the "Dive In" tab; pick clips by clicking on the mix's timeline.
+  Every number lives in `app/divein/config.py` and can be overridden from the
+  Tuning box on the page. Needs the Squid Boy V4 fonts in `assets/fonts`.
 - **`DFI_batch_render.ipynb`** — the original Google Colab notebook: reads the
   sheet, pulls files from Drive, renders, uploads, builds a Spotify playlist.
 

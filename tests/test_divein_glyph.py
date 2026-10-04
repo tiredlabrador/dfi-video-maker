@@ -1,5 +1,5 @@
 """
-Tests for the audio-reactive glyph: the ring coil, the bars and the line.
+Tests for the audio-reactive coil.
 
 The rule that matters most: ring shapes are generated once per episode and never
 change. Only their spacing moves. Re-randomising per frame would make the
@@ -110,9 +110,7 @@ def opaque_colours(tile):
     return {tuple(px[:3]) for px in arr[arr[..., 3] > 0]}
 
 
-@pytest.mark.parametrize("mode", ["rings", "bars", "line"])
-def test_every_mode_draws_only_in_brand_yellow(cfg, mode):
-    cfg["glyph"]["mode"] = mode
+def test_the_coil_draws_only_in_brand_yellow(cfg):
     g = Glyph(cfg, "02.01")
     tile, _ = g.render(g.rest_state())
     assert opaque_colours(tile) == {YELLOW}
@@ -170,46 +168,17 @@ def test_the_glow_is_stronger_at_a_peak(cfg):
     assert halo(hot) > halo(calm) * 1.1
 
 
-def test_bars_follow_their_levels(cfg):
-    cfg["glyph"]["mode"] = "bars"
+
+
+def test_redrawing_the_same_spacing_reuses_the_drawing(cfg):
+    """Drawing is the slow part of a frame, so identical coils are drawn once."""
     g = Glyph(cfg, "02.01")
-    low, (_, y_low) = g.render(dict(g.rest_state(), bands=[0, 0, 0, 0]))
-    high, (_, y_high) = g.render(dict(g.rest_state(), bands=[1, 1, 1, 1]))
-    def height(t):
-        return np.ptp(np.nonzero(np.asarray(t)[..., 3] > 128)[0])
-    assert height(high) > height(low) + 30
+    a = g.render({"gap": 12.3, "glow": 0.4})
+    b = g.render({"gap": 12.3, "glow": 0.4})
+    assert a is b
 
 
-def test_three_or_four_bars(cfg):
-    for count in (3, 4):
-        cfg["glyph"]["mode"] = "bars"
-        cfg["glyph"]["bars"]["count"] = count
-        cfg["glyph"]["bars"]["rest_heights"] = [0.5] * count
-        g = Glyph(cfg, "02.01")
-        tile, _ = g.render(g.rest_state())
-        cols = (np.asarray(tile)[..., 3] > 128).any(axis=0)
-        runs = np.count_nonzero(np.diff(cols.astype(int)) == 1) + int(cols[0])
-        assert runs == count
-
-
-def test_the_line_moves_with_the_audio(cfg):
-    cfg["glyph"]["mode"] = "line"
+def test_reused_drawings_still_track_small_changes(cfg):
+    """Rounding is to an eighth of a pixel: a quarter-pixel change still shows."""
     g = Glyph(cfg, "02.01")
-    quiet, _ = g.render(dict(g.rest_state(), wave=np.zeros(2000)))
-    t = np.arange(2000) / 44100
-    loud, _ = g.render(dict(g.rest_state(), wave=np.sin(2 * np.pi * 150 * t)))
-    def height(tile):
-        return np.ptp(np.nonzero(np.asarray(tile)[..., 3] > 128)[0])
-    assert height(loud) > height(quiet) + 15
-
-
-def test_a_louder_moment_swings_the_line_further(cfg):
-    cfg["glyph"]["mode"] = "line"
-    g = Glyph(cfg, "02.01")
-    t = np.arange(2000) / 44100
-    wave = np.sin(2 * np.pi * 150 * t)
-    quiet, _ = g.render(dict(g.rest_state(), wave=wave * 0.1, level=0.0))
-    loud, _ = g.render(dict(g.rest_state(), wave=wave * 0.1, level=1.0))
-    def height(tile):
-        return np.ptp(np.nonzero(np.asarray(tile)[..., 3] > 128)[0])
-    assert height(loud) > height(quiet) + 15
+    assert g.render({"gap": 12.0, "glow": 0.3}) is not g.render({"gap": 12.25, "glow": 0.3})

@@ -176,7 +176,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._error(403, "This server only answers your own browser.")
         path = urlparse(self.path).path
 
-        if path.startswith("/api/divein/"):          # the Dive In test area
+        if path.startswith("/api/divein/"):          # Dive In
             return self.server.divein.handle(self, "GET", path)
         if path == "/":
             return self._serve_static("index.html")
@@ -217,7 +217,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._is_local_request():
             return self._error(403, "This server only answers your own browser.")
         path = urlparse(self.path).path
-        if path.startswith("/api/divein/"):          # the Dive In test area
+        if path.startswith("/api/divein/"):          # Dive In
             return self.server.divein.handle(self, "POST", path)
         if path == "/api/render":
             return self._start_render()
@@ -500,7 +500,7 @@ class DFIServer(ThreadingHTTPServer):
         super().__init__(address, handler)
         self.jobs = JobStore()
         self.render_service = RenderService(work_dir=work_dir)
-        from app.divein.api import DiveInService      # the Dive In test area
+        from app.divein.api import DiveInService      # Dive In
         self.divein = DiveInService(self.render_service.work_dir, self.jobs)
         self.verbose = verbose
         self.config_overrides = config_overrides or {}

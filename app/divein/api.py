@@ -1,5 +1,5 @@
 """
-The Dive In test area's part of the local server.
+Dive In's part of the local server.
 
 Everything lives under /api/divein/. The existing app hands those requests
 over and otherwise doesn't know this exists.
@@ -23,6 +23,8 @@ import traceback
 import unicodedata
 from collections import OrderedDict
 from urllib.parse import parse_qs, quote, unquote, urlparse
+
+import numpy as np
 
 import generate_video as gv
 from app.divein.audio import analyse, decode_excerpt
@@ -105,6 +107,7 @@ class DiveInService:
         self._photos = _LRU(4)
         self._scenes = _LRU(2)
         self._layer_cache = _LRU(8)
+        self._overviews = _LRU(8)
         self._audio = _LRU(6)
         self._files: dict[str, list] = {}
         self._durations: dict[str, float] = {}
@@ -117,6 +120,9 @@ class DiveInService:
         try:
             if method == "GET" and path == "/api/divein/defaults":
                 return h._json(200, self.defaults())
+            if method == "GET" and path == "/api/divein/overview":
+                token = parse_qs(urlparse(h.path).query).get("audio", [""])[0]
+                return h._json(200, self._overview(token))
             if method == "GET" and path.startswith("/api/divein/jobs/"):
                 return self._job_route(h, path[len("/api/divein/jobs/"):])
             if method == "POST" and path == "/api/divein/upload":
@@ -265,8 +271,8 @@ class DiveInService:
             raise BadRequest(f"Colour must be one of: {', '.join(cfg['accents'])}.")
         cfg["accent"] = colour
         mode = d.get("glyph", cfg["glyph"]["mode"])
-        if mode not in ("rings", "bars", "line", "none"):
-            raise BadRequest("Glyph style must be rings, bars, line or none.")
+        if mode not in ("rings", "none"):
+            raise BadRequest("The coil is either rings or none.")
         cfg["glyph"]["mode"] = mode
         cfg["twitch"]["enabled"] = bool(d.get("twitch", cfg["twitch"]["enabled"]))
         motion = d.get("motion", cfg["audio"]["drive"])
@@ -352,7 +358,7 @@ class DiveInService:
         episode = str(d.get("episode", "")).strip() or "00.00"
         sr = cfg["audio"]["sample_rate"]
         key = json.dumps([audio, start, seconds, episode, cfg["audio"], cfg["twitch"],
-                          cfg["glyph"]["bars"]["count"], cfg["canvas"]["fps"]],
+                          cfg["canvas"]["fps"]],
                          sort_keys=True)
         def make():
             samples = decode_excerpt(audio, start, seconds, sr)
@@ -393,14 +399,14 @@ class DiveInService:
         analysis, frame = None, 0
         if d.get("audio") and d.get("time") is not None and fmt == "portrait":
             time = self._number(d["time"], "The preview time")
-            start = self._starts(d)[0]
+            start = self._preview_start(d, self._starts(d))
             seconds = cfg["audio"]["clip_seconds"]
             try:
                 _, analysis = self._analysis(d, cfg, start, seconds)
             except ValueError as exc:
                 raise BadRequest(str(exc))
             frame = frame_at(time, cfg["canvas"]["fps"], seconds)
-        img = scene.frame(frame, analysis, debug=bool(d.get("debug")))
+        img = scene.frame(frame, analysis)
         buffer = io.BytesIO()
         img.save(buffer, "JPEG", quality=88)
         lacking = missing_glyphs(str(d.get("artist", "")) + str(d.get("episode", "")), cfg)
@@ -421,6 +427,45 @@ class DiveInService:
             return buffer.getvalue()
         return self._layer_cache.get_or(key, make)
 
+    # ── the mix overview (for the timeline) ──────────────────────────────
+    OVERVIEW_POINTS = 1200
+
+    def _overview(self, token) -> dict:
+        """
+        How loud the whole mix is, as ~1200 points from 0 to 1, for the
+        timeline you click on to place clips. Decoded at low quality (1,000
+        samples a second) since only the shape matters: a 2-hour mix takes
+        a few seconds.
+        """
+        path = self._resolve(token, "audio file")
+
+        def make():
+            result = subprocess.run(
+                ["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", "1000",
+                 "-f", "s16le", "pipe:1"], capture_output=True)
+            if result.returncode != 0:
+                raise BadRequest("That audio file couldn't be read.")
+            x = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+            duration = self._audio_length(token)
+            n = self.OVERVIEW_POINTS
+            if x.size < n:
+                x = np.pad(x, (0, n - x.size))
+            edges = np.linspace(0, x.size, n + 1).astype(int)
+            rms = np.sqrt(np.add.reduceat(x * x, edges[:-1]) / np.maximum(np.diff(edges), 1))
+            top = float(np.percentile(rms, 98)) or 1.0
+            peaks = np.clip(rms / top, 0, 1)
+            return {"duration": duration, "peaks": [round(float(v), 3) for v in peaks]}
+        return self._overviews.get_or(path, make)
+
+    @staticmethod
+    def _preview_start(d: dict, starts: list[float]) -> float:
+        """The clip the preview should show: the one picked on the page."""
+        try:
+            i = int(d.get("preview_index", 0))
+        except (TypeError, ValueError):
+            i = 0
+        return starts[i] if 0 <= i < len(starts) else starts[0]
+
     # ── preview and export jobs ──────────────────────────────────────────
     def _filename(self, d: dict, suffix: str) -> str:
         episode = str(d.get("episode", "")).strip() or "00.00"
@@ -434,19 +479,19 @@ class DiveInService:
         starts = self._starts(d)
         self._resolve(d.get("audio"), "audio file")
         self._photo(d.get("photo"))                      # fail now, not mid-job
-        debug = bool(d.get("debug"))
         files: list = []
 
         def work(progress):
             folder = tempfile.mkdtemp(dir=self.outputs)
             if preview:
                 seconds = min(cfg["export"]["preview_seconds"], cfg["audio"]["clip_seconds"])
-                samples, analysis = self._analysis(d, cfg, starts[0], cfg["audio"]["clip_seconds"])
+                samples, analysis = self._analysis(d, cfg, self._preview_start(d, starts),
+                                                   cfg["audio"]["clip_seconds"])
                 scene = self._scene(d, cfg, "portrait")
                 out = os.path.join(folder, self._filename(d, " - preview.mp4"))
                 render_video(scene, analysis, samples, cfg["audio"]["sample_rate"], out,
                              cfg, seconds, width=cfg["export"]["preview_width"],
-                             debug=debug, progress=progress)
+                             progress=progress)
                 files.append(out)
                 return files
 
@@ -462,7 +507,7 @@ class DiveInService:
                 suffix = f" - {i + 1}.mp4" if len(starts) > 1 else ".mp4"
                 out = os.path.join(folder, self._filename(d, suffix))
                 render_video(scene, analysis, samples, cfg["audio"]["sample_rate"], out,
-                             cfg, seconds, debug=debug,
+                             cfg, seconds,
                              progress=lambda f, m="", i=i: progress((i + f) / steps,
                                  f"Clip {i + 1} of {len(starts)}: {m}"))
                 files.append(out)
@@ -488,9 +533,32 @@ class DiveInService:
                          for i, p in enumerate(files)] if job.status in ("done", "error") else []
         if data.get("error"):
             data["error"] = _scrub_paths(data["error"])
+        data["zip_url"] = (f"/api/divein/jobs/{job.id}/zip"
+                           if job.status == "done" and len(files) > 1 else None)
         return data
 
+    def _zip_route(self, h, job_id: str):
+        """Every file from an export, in one zip."""
+        job = self.jobs.get(job_id)
+        if job is None or job.id not in self._files:
+            return h._error(404, "No such job.")
+        if job.status != "done":
+            return h._error(409, "That isn't finished yet.")
+        import zipfile
+        folder = os.path.dirname(self._files[job.id][0])
+        zpath = os.path.join(folder, "Dive In.zip")
+        if not os.path.exists(zpath):
+            # Videos are already compressed: storing them is as small and faster.
+            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_STORED) as archive:
+                for path in self._files[job.id]:
+                    archive.write(path, arcname=os.path.basename(path))
+        first = os.path.basename(self._files[job.id][0])
+        name = re.sub(r"( - \d+)?\.(mp4|jpg)$", "", first).replace(" - square", "") + ".zip"
+        return h._send_file(zpath, "application/zip", _ascii_name(name), "attachment")
+
     def _job_route(self, h, rest: str):
+        if rest.endswith("/zip"):
+            return self._zip_route(h, rest[:-len("/zip")])
         job_id, _, tail = rest.partition("/files/")
         job = self.jobs.get(job_id)
         if job is None or job.id not in self._files:

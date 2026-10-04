@@ -177,14 +177,6 @@ def test_the_same_episode_gives_the_same_twitches(cfg):
     assert not (a["twitch_x"] == c["twitch_x"]).all()
 
 
-# ── bars ────────────────────────────────────────────────────────────────
-def test_there_is_a_level_per_bar_per_frame(cfg):
-    samples, _ = beat(3.0)
-    result = analyse(samples, SR, FPS, cfg, episode="02.01")
-    assert result["bands"].shape == (3 * FPS, cfg["glyph"]["bars"]["count"])
-    assert result["bands"].min() >= 0 and result["bands"].max() <= 1
-
-
 # ── smoothing on its own ────────────────────────────────────────────────
 def test_smoothing_jumps_up_at_once_and_falls_slowly():
     target = np.array([0, 0, 10, 0, 0, 0, 0, 0], dtype=float)
