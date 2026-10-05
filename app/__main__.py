@@ -42,7 +42,7 @@ def _first_free_port(host: str, preferred: int) -> int:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Run the DFI Video Maker locally.")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=8790)   # 8765 is used by Flare
     parser.add_argument("--no-browser", action="store_true",
                         help="Don't open a browser window automatically.")
     parser.add_argument("--verbose", action="store_true",

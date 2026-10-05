@@ -561,7 +561,7 @@ class DFIServer(ThreadingHTTPServer):
         return path if os.path.exists(path) else None
 
 
-def create_server(host: str = "127.0.0.1", port: int = 8765,
+def create_server(host: str = "127.0.0.1", port: int = 8790,
                   work_dir: str | None = None, verbose: bool = False,
                   config_overrides: dict | None = None) -> DFIServer:
     """
