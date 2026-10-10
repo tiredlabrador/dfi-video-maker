@@ -21,6 +21,8 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 CONTAINERS = {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts", b"dinf"}
+RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350]
+FRAME = 1024              # samples in every AAC frame of the kinds a bare stream carries
 
 
 class _Unreadable(Exception):
@@ -225,4 +227,9 @@ def read_sound(path: str, sample_rate: int) -> np.ndarray | None:
                              "-f", "f32le", "pipe:1"], input=bytes(stream), capture_output=True)
     if result.returncode != 0 or not result.stdout:
         return None
-    return np.frombuffer(result.stdout, dtype=np.float32)
+    sound = np.frombuffer(result.stdout, dtype=np.float32)
+    # A damaged scrap is dropped without a word, shifting all that follows. So
+    # the sound must be exactly as long as the index promises, or it's not used.
+    rate = RATES[(int.from_bytes(config[:2], "big") >> 7) & 0xF]
+    expected = (len(sizes) * FRAME - skip * rate / timescale) * sample_rate / rate
+    return sound if abs(sound.size - expected) <= 2 else None

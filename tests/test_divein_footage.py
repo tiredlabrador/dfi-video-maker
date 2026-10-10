@@ -434,7 +434,7 @@ def huge_video(server, session, tmp_path):
         f.truncate(40 * 1024 * 1024)
         f.seek(-4, 2)
         f.write(b"tail")
-    server.divein._footage[token] = [str(path)]
+    server.divein._footage[token] = ([str(path)], [])
     return token, path
 
 

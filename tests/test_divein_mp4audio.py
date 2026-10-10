@@ -54,3 +54,20 @@ def test_a_file_that_is_not_a_video_says_so(tmp_path):
     path = tmp_path / "junk.mp4"
     path.write_bytes(b"\x00\x00\x00\x08junk" * 100)
     assert read_sound(str(path), SR) is None
+
+
+def test_damaged_sound_is_never_handed_back_short(tmp_path):
+    """A dropped scrap would shift everything after it, and every clip with it."""
+    import os
+    from app.divein import mp4audio
+    path = make_video(tmp_path / "cam.mp4")
+    with open(path, "rb") as f:
+        _, _, _, offsets, per_chunk, sizes = mp4audio._layout(
+            mp4audio._find_moov(f, os.path.getsize(path)))
+    with open(path, "r+b") as f:                     # wreck five scraps of sound
+        for k in range(10, 15):
+            f.seek(int(offsets[k]))
+            f.write(b"\x00" * int(sizes[int(per_chunk[:k].sum())]))
+    expected = int(round((len(sizes) * 1024 - 1024) * SR / 48000))
+    quick = read_sound(str(path), SR)
+    assert quick is None or abs(quick.size - expected) <= 2

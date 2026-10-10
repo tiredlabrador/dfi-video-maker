@@ -31,7 +31,7 @@ from app.divein.compose import Scene, font_path, load_photo, missing_glyphs
 from app.divein.config import DEFAULTS, ConfigError, merge_config
 from app.divein.footage import FootageError, find_mix, list_videos, tidy_cache
 from app.divein.render import render_still, render_video
-from app.divein import transitions
+from app.divein import footage_clip, transitions
 
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024 * 1024        # 3GB: any mix, any format
 CHUNK = 1024 * 1024
@@ -107,7 +107,10 @@ class DiveInService:
         self._audio = _LRU(6)
         self._files: dict[str, list] = {}
         self._footage_jobs: set[str] = set()
-        self._footage: dict[str, list[str]] = {}         # mix token -> its videos, once found
+        # mix token -> (its videos, where it was found in them), kept together so
+        # the one can never be paired with another search's other.
+        self._footage: dict[str, tuple[list[str], list[dict]]] = {}
+        self._sync: dict[str, list[dict]] = {}           # export job -> each clip's measured sync
         self.footage_cache = footage_cache or os.path.join(self.root, "footage-audio")
         self._footage_latest: dict[str, object] = {}     # mix token -> newest search
         # DJI's D-Log M to Rec.709 file. Kept off GitHub (the repo is public and
@@ -516,17 +519,95 @@ class DiveInService:
         artist = " ".join(str(d.get("artist", "")).split()) or "Untitled"
         return gv.sanitise_filename(f"Dive In {episode} - {artist}{suffix}")
 
+    def _sources(self, d: dict, count: int) -> list[str]:
+        """For each clip: "photo" (the designed still) or "video" (camera footage)."""
+        raw = d.get("sources") or []
+        if not isinstance(raw, list):
+            raise BadRequest("The clip sources weren't understood.")
+        out = [str(s) for s in raw[:count]] + ["photo"] * max(0, count - len(raw))
+        if any(s not in ("photo", "video") for s in out):
+            raise BadRequest("Each clip is either the photo or the video.")
+        return out
+
+    def _footage_for(self, d: dict, i: int, start: float, seconds: float):
+        """(match, video path) for a footage clip, or a plain reason it can't be one."""
+        token = d.get("audio")
+        if token not in self._footage:
+            raise BadRequest(f"Clip {i + 1} uses the video: press Find the mix first.")
+        videos, matches = self._footage[token]
+        if not matches:
+            raise BadRequest(f"This mix wasn't found in that footage, so clip {i + 1} "
+                             f"can't use the video.")
+        for m in matches:
+            if m["mix_from"] - 0.01 <= start and start + seconds <= m["mix_to"] + 0.01:
+                return m, videos[m["video"]]
+        covered = " and ".join(f"{self._clock(m['mix_from'])}–{self._clock(m['mix_to'])}"
+                               for m in matches)
+        raise BadRequest(f"Clip {i + 1} ({self._clock(start)}) wasn't all filmed. The footage "
+                         f"covers {covered}. Move it, or switch it to the photo.")
+
+    def _footage_clip(self, d, cfg, match, video, start, seconds, out, width=None,
+                      progress=None) -> dict:
+        """Cut one footage clip, then measure its sync. Returns that measurement."""
+        mix = self._resolve(d.get("audio"), "audio file")
+        lut = self.lut_path if match.get("log") and d.get("lut", True) \
+            and os.path.isfile(self.lut_path) else None
+        video_t, confirmed = footage_clip.fine_tune(match, video, self.footage_cache, mix,
+                                                    start, seconds)
+        fps = footage_clip.frame_rate(video)
+        camera_sound = footage_clip.render(video, video_t, mix, start, match.get("rate", 1.0),
+                                           seconds, out, cfg, fps, lut=lut, width=width,
+                                           progress=progress)
+        try:
+            off_by = footage_clip.measure(out, camera_sound, seconds)
+        finally:
+            if os.path.exists(camera_sound):
+                os.remove(camera_sound)
+        checked = off_by is not None
+        return {"checked": checked, "off_by": round(off_by or 0.0, 4), "confirmed": confirmed,
+                "in_sync": checked and abs(off_by) < 1 / fps}
+
     def _start(self, d: dict, preview: bool):
         if not d.get("audio"):
             raise BadRequest("Choose the mix's audio file first.")
         cfg = self._config(d)
         starts = self._starts(d)
         self._resolve(d.get("audio"), "audio file")
-        self._photo(d.get("photo"))                      # fail now, not mid-job
+        sources = self._sources(d, len(starts))
+        seconds_each = cfg["audio"]["clip_seconds"]
+        footage = {i: self._footage_for(d, i, start, seconds_each)     # fail now, not mid-job
+                   for i, (start, source) in enumerate(zip(starts, sources)) if source == "video"}
+        has_photo = False
+        if d.get("photo"):
+            try:
+                self._photo(d.get("photo"))
+                has_photo = True
+            except BadRequest:
+                if "photo" in sources:
+                    raise
+                # Footage clips only: a photo that's gone just means no square JPG.
+        if "photo" in sources and not has_photo:
+            n = sources.index("photo") + 1
+            raise BadRequest(f"Choose a photo first: clip {n} uses the photo.")
         files: list = []
+        sync: list = []
 
         def work(progress):
             folder = tempfile.mkdtemp(dir=self.outputs)
+            try:
+                pick = int(d.get("preview_index", 0))
+            except (TypeError, ValueError, OverflowError):
+                pick = 0
+            pick = pick if 0 <= pick < len(starts) else 0
+            if preview and sources[pick] == "video":
+                seconds = min(cfg["export"]["preview_seconds"], seconds_each)
+                out = os.path.join(folder, self._filename(d, " - preview.mp4"))
+                match, video = footage[pick]
+                sync.append(self._footage_clip(d, cfg, match, video, starts[pick], seconds, out,
+                                               width=cfg["export"]["preview_width"],
+                                               progress=progress))
+                files.append(out)
+                return files
             if preview:
                 seconds = min(cfg["export"]["preview_seconds"], cfg["audio"]["clip_seconds"])
                 samples, analysis = self._analysis(d, cfg, self._preview_start(d, starts),
@@ -540,32 +621,44 @@ class DiveInService:
                 return files
 
             seconds = cfg["audio"]["clip_seconds"]
-            scene = self._scene(d, cfg, "portrait")
+            scene = self._scene(d, cfg, "portrait") if "photo" in sources else None
             steps = len(starts) + 1
             for i, start in enumerate(starts):
+                suffix = f" - {i + 1}.mp4" if len(starts) > 1 else ".mp4"
+                if sources[i] == "video":
+                    out = os.path.join(folder, self._filename(d, suffix))
+                    match, video = footage[i]
+                    measured = self._footage_clip(
+                        d, cfg, match, video, start, seconds, out,
+                        progress=lambda f, m="", i=i: progress((i + f) / steps,
+                            f"Clip {i + 1} of {len(starts)}: {m}"))
+                    sync.append({"clip": i + 1, **measured})
+                    files.append(out)
+                    continue
                 progress(i / steps, f"Analysing clip {i + 1} of {len(starts)}")
                 try:
                     samples, analysis = self._analysis(d, cfg, start, seconds)
                 except ValueError as exc:
                     raise ValueError(f"Clip {i + 1} ({self._clock(start)}): {exc}")
-                suffix = f" - {i + 1}.mp4" if len(starts) > 1 else ".mp4"
                 out = os.path.join(folder, self._filename(d, suffix))
                 render_video(scene, analysis, samples, cfg["audio"]["sample_rate"], out,
                              cfg, seconds,
                              progress=lambda f, m="", i=i: progress((i + f) / steps,
                                  f"Clip {i + 1} of {len(starts)}: {m}"))
                 files.append(out)
-            progress((steps - 1) / steps, "Making the square JPG")
-            square = self._scene(d, cfg, "square")
-            jpg = os.path.join(folder, self._filename(d, " - square.jpg"))
-            render_still(square, jpg, cfg["square"]["jpg_quality"])
-            files.append(jpg)
+            if has_photo:                                # the 1:1 JPG is made from the photo
+                progress((steps - 1) / steps, "Making the square JPG")
+                square = self._scene(d, cfg, "square")
+                jpg = os.path.join(folder, self._filename(d, " - square.jpg"))
+                render_still(square, jpg, cfg["square"]["jpg_quality"])
+                files.append(jpg)
             progress(1.0, "Finished")
             return files
 
         label = "Dive In preview" if preview else "Dive In export"
         job = self.jobs.submit("divein", work, label=label)
         self._files[job.id] = files
+        self._sync[job.id] = sync
         return job
 
     # ── finding the mix in camera footage ────────────────────────────────
@@ -580,13 +673,14 @@ class DiveInService:
 
         ticket = object()
         self._footage_latest[token] = ticket
+        self._footage.pop(token, None)                   # the old folder no longer counts
 
         def work(progress):
             found = find_mix(mix, folder, self.footage_cache, progress, videos=videos)
             # The page plays these by number, so only the newest search's list
             # counts: an older, slower search finishing later mustn't replace it.
             if self._footage_latest.get(token) is ticket:
-                self._footage[token] = videos
+                self._footage[token] = (videos, found["matches"])
             return found
         job = self.jobs.submit("divein", work, label="Finding the mix in the footage")
         self._files[job.id] = []
@@ -600,7 +694,7 @@ class DiveInService:
         if h.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
             return h._error(403, "Only Dive In itself can show the footage.")
         query = parse_qs(urlparse(h.path).query)
-        videos = self._footage.get(query.get("audio", [""])[0], [])
+        videos = self._footage.get(query.get("audio", [""])[0], ([], []))[0]
         try:
             path = videos[int(query.get("video", [""])[0])]
         except (ValueError, IndexError):
@@ -613,6 +707,8 @@ class DiveInService:
         data = job.as_dict()
         if job.id in self._footage_jobs and job.status == "done":
             data["footage"] = job.result
+        if job.id in self._sync and job.status in ("done", "error"):
+            data["sync"] = self._sync[job.id]
         files = self._files.get(job.id, [])
         data["files"] = [{"name": os.path.basename(p),
                           "url": f"/api/divein/jobs/{job.id}/files/{i}",

@@ -365,7 +365,10 @@ def find_mix(mix_path: str, folder: str, cache_dir: str, progress=None,
         match = _locate_one(pieces, cam, mix.size / MATCH_SR)
         if match:
             match["offset"] += probe["lead"]
-            matches.append({"video": i, "name": names[i], "log": probe["log"], **match})
+            # Moments before the picture starts weren't filmed, whatever the sound says.
+            match["mix_from"] = max(match["mix_from"], -match["offset"] / match["rate"])
+            matches.append({"video": i, "name": names[i], "log": probe["log"],
+                            "lead": probe["lead"], **match})
     report(1.0, "Finished")
     return {"videos": names, "matches": matches,
             "message": describe(matches, names, silent)}
