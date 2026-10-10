@@ -1,6 +1,6 @@
 # Dive In with video — plan
 
-Status: **Steps 1 and 2 done (10 Oct 2026); Step 3 in progress.**
+Status: **Steps 1 and 2 done; Step 3 parts 1–2 done (10 Oct 2026).** Next: move the crop.
 
 Step 3 is split into four parts, built in this order:
 1. **See the footage while choosing clips** — done. Selecting a clip shows the camera
@@ -12,7 +12,13 @@ Step 3 is split into four parts, built in this order:
    grabbing, and live D-Log M correction in the preview. D-Log is spotted as 10-bit, non-HDR
    footage, and fixed with DJI's Osmo Action 4 LUT, which lives in `assets/luts/` and is
    kept off GitHub (the repo is public; the file is DJI's). Other Macs need their own copy.
-2. **Export video clips:** footage plus the mix, each clip's sync fine-tuned and measured.
+2. **Export video clips** — done. Each filmed clip has a Footage/Photo switch (footage by
+   default). Footage clips: 1080×1350 at the camera's frame rate, D-Log corrected, mix
+   underneath, no overlays yet. Each is fine-tuned by listening before cutting, then
+   measured against the camera's own sound cut in the same pass; the result shows by the
+   downloads. Real clips from Oct and May all measured in sync. A footage-only export
+   needs no photo (and then makes no square JPG). The first read of a video's sound now
+   takes seconds (`app/divein/mp4audio.py` reads only the sound's bytes).
 3. **Move the crop** per clip.
 4. **Suggested moments**, e.g. big drops in the filmed part of the mix.
 

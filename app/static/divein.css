@@ -87,6 +87,7 @@ input[type=range] { accent-color: var(--accent); }
   background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: .75rem;
 }
 .results a { color: var(--accent); }
+.results a.btn { color: #000; }             /* the Download all button: dark on yellow */
 .result-size { color: var(--muted); font-size: .75rem; flex-shrink: 0; }
 
 .field label.check { display: flex; color: var(--text); font-size: .85rem; }
@@ -107,6 +108,10 @@ body.divein main { max-width: 1680px; }
 body.divein .frame, body.divein .footage-frame {
   width: min(100%, calc((100vh - 29rem) * 4 / 5));     /* room for the docked timeline */
 }
+
+/* The preview panel stays put while you scroll; it scrolls on its own above
+   the docked timeline, so the downloads under it can always be reached. */
+body.divein .panel--result { max-height: calc(100vh - 5rem - 17rem); overflow-y: auto; }
 
 /* ── The mix timeline, docked along the bottom like a video editor's ── */
 .timeline-dock {
@@ -145,6 +150,10 @@ body.divein .frame, body.divein .footage-frame {
 }
 .clips button:hover { border-color: var(--accent); }
 .clips .clip-remove { color: var(--muted); }
+.clips .clip-source { min-width: 4.6rem; }
+.clips .clip-source:disabled { color: var(--muted); cursor: default; border-color: var(--line); }
+.sync-notes { margin-top: .6rem; }
+.sync-notes p { margin: .2rem 0; font-size: .8rem; }
 .type-times { margin-top: .5rem; }
 .type-times .field { margin: .5rem 0 0; }
 .field.inline input[type=number] { width: 5rem; }

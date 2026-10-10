@@ -25,6 +25,7 @@ const state = {
   polling: null,
   // The mix timeline
   starts: [],             // clip start times, in seconds
+  sources: [],            // for each clip: 'auto' (footage if filmed), 'photo' or 'video'
   selected: 0,            // which clip the preview and "moment" use
   overview: null,         // {duration, peaks}
   detail: null,           // the same, finer, for the close-up
@@ -91,6 +92,8 @@ function design(extra = {}) {
     artist: $('artist').value,
     episode: $('episode').value,
     starts: state.starts,                       // exact seconds, not rounded
+    sources: state.starts.map((_, i) => clipSource(i)),
+    lut: $('lut-on').checked,
     preview_index: state.selected,
     clip_seconds: clipLength(),
     glyph: $('rings-on').checked ? 'rings' : 'none',
@@ -378,6 +381,7 @@ async function useAudio(file) {
   show($('footage-row'), true);
   stopListening();
   state.starts = state.starts.filter((s) => s < state.audio.duration);
+  state.sources = [];
   show($('timeline'), true);
   show($('clips-hint'), true);
   $('timeline-hover').textContent = 'Drawing the mix…';
@@ -716,6 +720,7 @@ function startsFromText() {
   const times = parts.map(parseTime);
   if (times.some((t) => t === null)) return false;      // keep typing
   stopListening();
+  if (times.length !== state.starts.length) state.sources = [];
   state.starts = times;
   if (state.selected >= times.length) state.selected = 0;
   renderClips();
@@ -754,9 +759,24 @@ function renderClips() {
       else if (state.listening !== null && state.listening > i) state.listening -= 1;
       if (state.selected > i) state.selected -= 1;
       state.starts.splice(i, 1);
+      state.sources.splice(i, 1);
       startsChanged();
     });
-    li.append(num, time, listen, remove);
+    const source = document.createElement('button');
+    source.type = 'button';
+    source.className = 'clip-source';
+    const filmed = clipFilmed(i);
+    source.textContent = clipSource(i) === 'video' ? 'Footage' : 'Photo';
+    source.disabled = !filmed;
+    source.title = filmed ? 'Switch between the camera footage and the photo'
+      : (state.footage ? 'Not all filmed: this clip uses the photo' : 'Uses the photo');
+    source.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.sources[i] = clipSource(i) === 'video' ? 'photo' : 'video';
+      renderClips();
+      if (i === state.selected) { showFootage(); scheduleStill(0); }
+    });
+    li.append(num, time, source, listen, remove);
     li.addEventListener('click', () => selectClip(i));
     list.append(li);
   });
@@ -880,13 +900,18 @@ function setBusy(busy) {
 
 async function startJob(kind) {
   setError('');
-  if (!state.photo) { setError('Choose a photo first.'); return; }
   if (!state.audio) { setError('Choose the mix first.'); return; }
   if ($('starts').value.trim() && !startsFromText()) {
     setError('One of the typed start times can’t be read. Use mm:ss or h:mm:ss, separated by commas.');
     return;
   }
   if (!state.starts.length) { setError('Add a clip: click on the mix where it should start.'); return; }
+  const usesPhoto = kind === 'preview' ? clipSource(state.selected) === 'photo'
+    : state.starts.some((_, i) => clipSource(i) === 'photo');
+  if (usesPhoto && !state.photo) {
+    setError('Choose a photo first: a clip uses the photo (filmed clips can use the footage).');
+    return;
+  }
   stopListening();
   setBusy(true);
   show($('files'), false);
@@ -920,7 +945,31 @@ async function startJob(kind) {
   }, 400);
 }
 
+/** One line per footage clip: was it measured in sync? */
+function showSync(job) {
+  const notes = $('sync-notes');
+  notes.innerHTML = '';
+  for (const s of job.sync || []) {
+    const p = document.createElement('p');
+    const name = s.clip ? `Clip ${s.clip}` : 'The preview';
+    if (s.in_sync) {
+      p.className = 'hint';
+      p.textContent = `${name}: footage measured in sync with the mix.`;
+    } else if (s.checked) {
+      p.className = 'warn';
+      p.textContent = `${name}: the footage is ${Math.abs(s.off_by).toFixed(2)}s out of sync `
+        + '(the sound is ' + (s.off_by > 0 ? 'late' : 'early') + '). Try moving the clip slightly.';
+    } else {
+      p.className = 'warn';
+      p.textContent = `${name}: the camera’s sound was too unclear to check the sync. Watch it before posting.`;
+    }
+    notes.append(p);
+  }
+  show(notes, Boolean((job.sync || []).length));
+}
+
 function showFiles(job, kind) {
+  showSync(job);
   const list = $('file-list');
   list.innerHTML = '';
   for (const f of job.files) {
@@ -950,6 +999,8 @@ function showFiles(job, kind) {
   if (job.zip_url) { zip.href = job.zip_url; zip.download = 'Dive In.zip'; }
   show(zip, Boolean(job.zip_url));
   show($('files'), true);
+  const panel = document.querySelector('.panel--result');   // bring the downloads into view
+  panel.scrollTop = panel.scrollHeight;
   if (kind === 'preview' && job.files[0]) playVideo(job.files[0].url);
 }
 
@@ -967,6 +1018,24 @@ function playVideo(url) {
 
 /* ── the camera footage in the preview ───────────────────────────── */
 
+/** Whether all of clip `i` was filmed. */
+function clipFilmed(i) {
+  const start = state.starts[i];
+  if (start === undefined || !state.footage || !state.audio
+      || state.footage.audio !== state.audio.token) return false;
+  return state.footage.matches.some((m) => m.mix_from - 0.01 <= start
+    && start + clipLength() <= m.mix_to + 0.01);
+}
+
+/** What clip `i` will be made from: 'video' (the footage) or 'photo'. */
+function clipSource(i) {
+  while (state.sources.length < state.starts.length) state.sources.push('auto');
+  state.sources.length = state.starts.length;
+  const chosen = state.sources[i];
+  if (!clipFilmed(i)) return 'photo';
+  return chosen === 'photo' ? 'photo' : 'video';
+}
+
 /** Where moment `t` of the mix is in the footage: {video, time}, or null if unfilmed. */
 function footageAt(t) {
   if (!state.footage || !state.audio || state.footage.audio !== state.audio.token) return null;
@@ -981,7 +1050,8 @@ function footageAt(t) {
 function showFootage(rough = false) {
   const el = $('footage');
   const start = state.starts.length ? state.starts[state.selected] : null;
-  const at = start === null || state.format !== 'portrait' ? null : footageAt(start);
+  const at = start === null || state.format !== 'portrait' || clipSource(state.selected) !== 'video'
+    ? null : footageAt(start);
   $('stage').classList.toggle('is-footage', Boolean(at));
   updateGrade(at);
   if (!at) { el.pause(); return; }
@@ -1233,6 +1303,7 @@ async function findFootage() {
       ? `${s.footage.message} The white strip under the mix shows the filmed parts.`
       : s.footage.message;
     drawTimeline();
+    renderClips();                        // filmed clips now offer the footage
     showFootage();
   }, 500);
 }
