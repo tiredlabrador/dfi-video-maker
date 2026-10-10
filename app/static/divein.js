@@ -28,6 +28,7 @@ const state = {
   selected: 0,            // which clip the preview and "moment" use
   overview: null,         // {duration, peaks}
   footage: null,          // {audio, matches}: where the mix was filmed
+  transitions: [],        // rough seconds where one record gives way to the next
   listening: null,        // index of the clip playing, or null
   // The quick draft
   photoEl: null,
@@ -365,7 +366,9 @@ async function useAudio(file) {
   player.src = URL.createObjectURL(file);
 
   state.overview = null;
+  state.transitions = [];
   state.footage = null;
+  show($('lut-row'), false);
   showFootage();
   $('footage-status').textContent = FOOTAGE_HINT;
   show($('footage-row'), true);
@@ -383,11 +386,28 @@ async function useAudio(file) {
       state.overview = overview;
     }
   } catch { /* the timeline still works without the shape */ }
-  $('timeline-hover').textContent = 'Click to add a clip. Drag a clip to move it.';
+  findTransitions(token);                 // a few seconds more; drawn when ready
+  $('timeline-hover').textContent = timelineHint();
   drawTimeline();
 }
 
 /* ── the mix timeline ────────────────────────────────────────────── */
+
+function timelineHint() {
+  return 'Click to add a clip. Drag a clip to move it.'
+    + (state.transitions.length ? ' Dotted lines: likely transitions.' : '');
+}
+
+async function findTransitions(token) {
+  try {
+    const response = await fetch(`/api/divein/transitions?audio=${encodeURIComponent(token)}`);
+    const found = response.ok ? await response.json() : null;
+    if (!state.audio || state.audio.token !== token || !found || !Array.isArray(found.times)) return;
+    state.transitions = found.times;
+    $('timeline-hover').textContent = timelineHint();
+    drawTimeline();
+  } catch { /* the timeline works without them */ }
+}
 
 function duration() {
   return (state.overview && state.overview.duration) || (state.audio && state.audio.duration) || 0;
@@ -415,6 +435,15 @@ function drawTimeline() {
     const bar = Math.max(1, v * (h - 12));
     ctx.fillRect(x, (h - bar) / 2, 1, bar);
   }
+  // Likely transitions: dotted lines.
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 3]);
+  for (const t of state.transitions) {
+    const x = Math.round(t / total * w) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+  }
+  ctx.setLineDash([]);
   // The clips.
   const len = clipLength();
   state.starts.forEach((start, i) => {
@@ -448,13 +477,21 @@ function drawTimeline() {
   }
 }
 
+/**
+ * The clip under `x`, or -1. On a long mix a clip is only a few pixels wide,
+ * so each one can be grabbed anywhere from just before its line to the end
+ * of its number tag; where two overlap, the one whose line is nearer wins.
+ */
 function clipAt(x, w) {
   const total = duration(), len = clipLength();
-  for (let i = state.starts.length - 1; i >= 0; i--) {
-    const x0 = state.starts[i] / total * w, x1 = (state.starts[i] + len) / total * w;
-    if (x >= x0 - 3 && x <= Math.max(x1, x0 + 8)) return i;
-  }
-  return -1;
+  let best = -1, nearest = Infinity;
+  state.starts.forEach((start, i) => {
+    const x0 = start / total * w, x1 = (start + len) / total * w;
+    if (x >= x0 - 8 && x <= Math.max(x1, x0 + 22) && Math.abs(x - x0) < nearest) {
+      best = i; nearest = Math.abs(x - x0);
+    }
+  });
+  return best;
 }
 
 function wireTimeline() {
@@ -484,8 +521,15 @@ function wireTimeline() {
   });
   canvas.addEventListener('pointermove', (e) => {
     const t = timeAt(e);
-    $('timeline-hover').textContent = duration() ? `${timecode(t)} — click to add a clip, drag to move one` : '';
-    if (!drag) return;
+    const box0 = canvas.getBoundingClientRect();
+    const near = state.transitions.some((s) => Math.abs(s - t) / duration() * box0.width < 5);
+    $('timeline-hover').textContent = duration()
+      ? `${timecode(t)}${near ? ' — likely transition' : ''} — click to add a clip, drag to move one` : '';
+    if (!drag) {
+      const box = canvas.getBoundingClientRect();
+      canvas.classList.toggle('is-over-clip', clipAt(e.clientX - box.left, box.width) >= 0);
+      return;
+    }
     const max = Math.max(0, duration() - clipLength());
     state.starts[drag.i] = Math.round(Math.min(max, Math.max(0, t - drag.offset)));
     drag.moved = true;
@@ -501,7 +545,7 @@ function wireTimeline() {
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointercancel', end);
   canvas.addEventListener('pointerleave', () => {
-    if (!drag) $('timeline-hover').textContent = 'Click to add a clip. Drag a clip to move it.';
+    if (!drag) $('timeline-hover').textContent = timelineHint();
   });
   window.addEventListener('resize', drawTimeline);
 }
@@ -771,6 +815,7 @@ function playVideo(url) {
   const player = $('player');
   $('stage').classList.remove('is-footage');      // the finished video takes the stage
   $('footage').pause();
+  updateGrade(null);
   show($('frame'), false);
   show($('stage-empty'), false);
   player.src = url;
@@ -784,7 +829,7 @@ function playVideo(url) {
 function footageAt(t) {
   if (!state.footage || !state.audio || state.footage.audio !== state.audio.token) return null;
   const m = state.footage.matches.find((f) => t >= f.mix_from && t < f.mix_to);
-  return m ? { video: m.video, time: m.offset + m.rate * t } : null;
+  return m ? { video: m.video, time: m.offset + m.rate * t, log: Boolean(m.log) } : null;
 }
 
 /**
@@ -796,6 +841,7 @@ function showFootage(rough = false) {
   const start = state.starts.length ? state.starts[state.selected] : null;
   const at = start === null || state.format !== 'portrait' ? null : footageAt(start);
   $('stage').classList.toggle('is-footage', Boolean(at));
+  updateGrade(at);
   if (!at) { el.pause(); return; }
   $('player').pause();
   const src = `/api/divein/footage/video?audio=${encodeURIComponent(state.audio.token)}&video=${at.video}`;
@@ -806,14 +852,187 @@ function showFootage(rough = false) {
   else el.currentTime = at.time;
 }
 
-/** While a clip plays, keep the footage with the mix (re-aligning if it slips). */
+/**
+ * While a clip plays, keep the footage with the mix (re-aligning if it slips).
+ * A jump in a 17GB file can take a moment: never ask for another while one is
+ * under way, or the picture keeps restarting its jump and never plays.
+ */
+let lastAlign = 0;
 function followListening() {
   const el = $('footage');
   if (!$('stage').classList.contains('is-footage')) return;
   const at = footageAt($('listen').currentTime);
   if (!at) { el.pause(); return; }
-  if (Math.abs(el.currentTime - at.time) > 0.12) el.currentTime = at.time;
+  const now = performance.now();
+  // A jump that's taken over two seconds has stalled (likely after the tab
+  // sat in the background): ask again rather than wait for ever.
+  const stalled = el.seeking && now - lastAlign > 2000;
+  if ((!el.seeking && Math.abs(el.currentTime - at.time) > 0.2 && now - lastAlign > 600) || stalled) {
+    el.currentTime = at.time;
+    lastAlign = now;
+  }
   if (el.paused) el.play().catch(() => {});
+}
+
+/** If the browser gives up on the footage (it can, after the tab sat in the
+ *  background), load it afresh and go back to the right moment. */
+let footageRetries = 0;
+function wireFootageRecovery() {
+  const el = $('footage');
+  el.addEventListener('loadeddata', () => { footageRetries = 0; });
+  el.addEventListener('error', () => {
+    if (!el.getAttribute('src')) return;
+    // 4 = this browser can't play the file at all: retrying won't help.
+    if (el.error && el.error.code === 4) {
+      $('footage-status').textContent = 'This browser can’t play this footage. Try Safari.';
+      return;
+    }
+    if (footageRetries >= 3) {
+      $('footage-status').textContent = 'The footage stopped loading. Is the drive still plugged in?';
+      return;
+    }
+    footageRetries += 1;
+    setTimeout(() => { el.load(); showFootage(); }, 500 * footageRetries);
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (state.listening === null) { showFootage(); return; }
+    lastAlign = 0;                          // back in view: line up again straight away
+    followListening();
+  });
+}
+
+/* ── correcting D-Log colours (DJI's colour file, applied by the GPU) ── */
+
+const grade = { gl: null, video: null, size: 0, crop: null, ready: false, problem: '', loop: null, drawn: '' };
+
+/** Read DJI's .cube file: its size, and its colours (red changing fastest). */
+function parseCube(text) {
+  let size = 0;
+  const values = [];
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    if (t.startsWith('LUT_3D_SIZE')) { size = parseInt(t.split(/\s+/)[1], 10); continue; }
+    if (/^[A-Z_]/.test(t)) continue;                     // TITLE, DOMAIN_MIN and the like
+    const parts = t.split(/\s+/).map(Number);
+    if (parts.length === 3 && parts.every(Number.isFinite)) values.push(...parts);
+  }
+  if (!size || values.length !== size * size * size * 3) throw new Error('That colour file isn’t a 3D LUT.');
+  return { size, data: new Float32Array(values) };
+}
+
+function compile(gl, type, source) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, source);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+
+/** Fetch the colour file once and set up the drawing. False if it can't be done. */
+async function loadGrade() {
+  if (grade.ready || grade.problem) return grade.ready;
+  try {
+    const response = await fetch('/api/divein/lut');
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error
+      || 'The colour file couldn’t be loaded.');
+    const lut = parseCube(await response.text());
+    const gl = $('graded').getContext('webgl2', { premultipliedAlpha: false });
+    if (!gl) throw new Error('This browser can’t correct colours live. The export still will.');
+    const program = gl.createProgram();
+    gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, `#version 300 es
+      in vec2 corner; out vec2 uv;
+      void main() { uv = corner * 0.5 + 0.5; gl_Position = vec4(corner, 0.0, 1.0); }`));
+    gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, `#version 300 es
+      precision highp float; precision highp sampler3D;
+      in vec2 uv; out vec4 colour;
+      uniform sampler2D picture; uniform sampler3D lut; uniform vec4 crop; uniform float size;
+      void main() {
+        vec3 c = texture(picture, crop.xy + uv * crop.zw).rgb;
+        colour = vec4(texture(lut, c * ((size - 1.0) / size) + 0.5 / size).rgb, 1.0);
+      }`));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+    gl.useProgram(program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const corner = gl.getAttribLocation(program, 'corner');
+    gl.enableVertexAttribArray(corner);
+    gl.vertexAttribPointer(corner, 2, gl.FLOAT, false, 0, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_3D, gl.createTexture());
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGB16F, lut.size, lut.size, lut.size, 0,
+      gl.RGB, gl.FLOAT, lut.data);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
+      [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE],
+      [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_3D, k, v);
+    gl.uniform1i(gl.getUniformLocation(program, 'lut'), 1);
+    gl.uniform1f(gl.getUniformLocation(program, 'size'), lut.size);
+
+    gl.activeTexture(gl.TEXTURE0);
+    grade.video = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, grade.video);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
+      [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) {
+      gl.texParameteri(gl.TEXTURE_2D, k, v);
+    }
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.uniform1i(gl.getUniformLocation(program, 'picture'), 0);
+    grade.crop = gl.getUniformLocation(program, 'crop');
+    grade.gl = gl;
+    grade.ready = true;
+  } catch (error) {
+    grade.problem = error.message || 'The colours couldn’t be corrected.';
+  }
+  return grade.ready;
+}
+
+/** Draw the current video frame, colour-corrected, cropped to 4:5 from the centre. */
+function drawGraded() {
+  const el = $('footage'), canvas = $('graded'), gl = grade.gl;
+  if (!gl || el.readyState < 2 || !el.videoWidth) return;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.round(canvas.clientWidth * ratio), h = Math.round(canvas.clientHeight * ratio);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, w, h);
+  gl.bindTexture(gl.TEXTURE_2D, grade.video);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, el);
+  // The same crop as the plain video's object-fit: cover.
+  const frame = w / h, picture = el.videoWidth / el.videoHeight;
+  const uw = picture > frame ? frame / picture : 1, vh = picture > frame ? 1 : picture / frame;
+  gl.uniform4f(grade.crop, (1 - uw) / 2, (1 - vh) / 2, uw, vh);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+/** Redraw only when there's a new frame to show (or the size changed). */
+function gradeLoop(loop) {
+  if (grade.loop !== loop) return;                   // a newer loop has taken over
+  const el = $('footage'), canvas = $('graded');
+  const key = `${el.currentTime}|${canvas.clientWidth}|${canvas.clientHeight}|${el.readyState}`;
+  if (key !== grade.drawn) { drawGraded(); grade.drawn = key; }
+  requestAnimationFrame(() => gradeLoop(loop));
+}
+
+/** Correct the colours when the footage on show was filmed flat and it's wanted. */
+let gradeRequest = 0;
+async function updateGrade(at) {
+  const request = ++gradeRequest;
+  const wanted = Boolean(at && at.log && $('lut-on').checked);
+  if (wanted && !(await loadGrade())) {
+    $('footage-status').textContent = grade.problem;
+  }
+  if (request !== gradeRequest) return;              // a newer call has decided
+  const on = wanted && grade.ready;
+  show($('graded'), on);
+  if (on && !grade.loop) {
+    grade.loop = {};
+    grade.drawn = '';
+    const loop = grade.loop;
+    requestAnimationFrame(() => gradeLoop(loop));
+  }
+  if (!on) grade.loop = null;
 }
 
 /* ── finding the mix in camera footage ───────────────────────────── */
@@ -830,6 +1049,8 @@ async function findFootage() {
   save();
   const token = state.audio.token;
   state.footage = null;                   // the old strip belongs to the old folder
+  if (!grade.ready) grade.problem = '';    // the colour file may have been added since
+  show($('lut-row'), false);
   drawTimeline();
   showFootage();
   const status = $('footage-status');
@@ -865,6 +1086,7 @@ async function findFootage() {
       return;
     }
     state.footage = { audio: token, matches: s.footage.matches };
+    show($('lut-row'), s.footage.matches.some((m) => m.log));
     status.textContent = s.footage.matches.length
       ? `${s.footage.message} The white strip under the mix shows the filmed parts.`
       : s.footage.message;
@@ -942,6 +1164,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadDefaults();
   wireDrag();
   wireTimeline();
+  wireFootageRecovery();
   wireDrop($('photo-drop'), $('photo-input'), usePhoto);
   wireDrop($('stage'), null, usePhoto);                 // drop straight on the preview
   wireDrop($('audio-drop'), $('audio-input'), useAudio);
@@ -984,6 +1207,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   $('footage-btn').addEventListener('click', findFootage);
+  $('lut-on').addEventListener('change', () => showFootage());
   $('footage-folder').addEventListener('keydown', (e) => { if (e.key === 'Enter') findFootage(); });
   $('preview-btn').addEventListener('click', () => startJob('preview'));
   $('export-btn').addEventListener('click', () => startJob('export'));

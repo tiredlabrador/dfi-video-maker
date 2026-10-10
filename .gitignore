@@ -35,3 +35,6 @@ backups/
 
 # Local UI scratch
 app/static/__uitest*
+
+# DJI's colour files: DJI's to share, not ours (this repo is public)
+assets/luts/

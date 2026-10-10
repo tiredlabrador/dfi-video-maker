@@ -31,6 +31,7 @@ from app.divein.compose import Scene, font_path, load_photo, missing_glyphs
 from app.divein.config import DEFAULTS, ConfigError, merge_config
 from app.divein.footage import FootageError, find_mix, list_videos, tidy_cache
 from app.divein.render import render_still, render_video
+from app.divein import transitions
 
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024 * 1024        # 3GB: any mix, any format
 CHUNK = 1024 * 1024
@@ -102,12 +103,17 @@ class DiveInService:
         self._scenes = _LRU(2)
         self._layer_cache = _LRU(8)
         self._overviews = _LRU(8)
+        self._transitions = _LRU(8)
         self._audio = _LRU(6)
         self._files: dict[str, list] = {}
         self._footage_jobs: set[str] = set()
         self._footage: dict[str, list[str]] = {}         # mix token -> its videos, once found
         self.footage_cache = footage_cache or os.path.join(self.root, "footage-audio")
         self._footage_latest: dict[str, object] = {}     # mix token -> newest search
+        # DJI's D-Log M to Rec.709 file. Kept off GitHub (the repo is public and
+        # the file is DJI's), so each Mac has its own copy.
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.lut_path = os.path.join(repo, "assets", "luts", "dji-dlogm-to-rec709.cube")
         tidy_cache(self.footage_cache)
         self._durations: dict[str, float] = {}
         self._still_lock = threading.Lock()
@@ -123,6 +129,14 @@ class DiveInService:
             if method == "GET" and path == "/api/divein/overview":
                 token = parse_qs(urlparse(h.path).query).get("audio", [""])[0]
                 return h._json(200, self._overview(token))
+            if method == "GET" and path == "/api/divein/lut":
+                if not os.path.isfile(self.lut_path):
+                    return h._error(404, "DJI's D-Log M colour file isn't installed: put it in "
+                                         "assets/luts/dji-dlogm-to-rec709.cube.")
+                return h._send_file(self.lut_path, "text/plain; charset=utf-8", "lut.cube")
+            if method == "GET" and path == "/api/divein/transitions":
+                token = parse_qs(urlparse(h.path).query).get("audio", [""])[0]
+                return h._json(200, self._find_transitions(token))
             if method == "GET" and path == "/api/divein/footage/video":
                 return self._footage_video(h)
             if method == "GET" and path.startswith("/api/divein/jobs/"):
@@ -459,6 +473,17 @@ class DiveInService:
             peaks = np.clip(rms / top, 0, 1)
             return {"duration": duration, "peaks": [round(float(v), 3) for v in peaks]}
         return self._overviews.get_or(path, make)
+
+    def _find_transitions(self, token) -> dict:
+        """Roughly where the mix moves from one record to the next (a few seconds' work)."""
+        path = self._resolve(token, "audio file")
+
+        def make():
+            try:
+                return {"times": transitions.find_transitions(transitions.decode(path))}
+            except ValueError as exc:
+                raise BadRequest(str(exc))
+        return self._transitions.get_or(path, make)
 
     @staticmethod
     def _preview_start(d: dict, starts: list[float]) -> float:

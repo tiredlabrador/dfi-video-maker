@@ -7,6 +7,11 @@ Step 3 is split into four parts, built in this order:
    footage at that moment (4:5) in the preview; Listen plays it in step with the mix.
    Saved camera sound now lives in `~/Library/Caches/DFI Video Maker/` (kept under 4GB),
    so the slow first read happens once per video, not once per app start.
+   Also done: dotted lines on the waveform where one record likely gives way to the next
+   (`app/divein/transitions.py`; rough, near the middle of each blend), easier clip
+   grabbing, and live D-Log M correction in the preview. D-Log is spotted as 10-bit, non-HDR
+   footage, and fixed with DJI's Osmo Action 4 LUT, which lives in `assets/luts/` and is
+   kept off GitHub (the repo is public; the file is DJI's). Other Macs need their own copy.
 2. **Export video clips:** footage plus the mix, each clip's sync fine-tuned and measured.
 3. **Move the crop** per clip.
 4. **Suggested moments**, e.g. big drops in the filmed part of the mix.

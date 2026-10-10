@@ -70,6 +70,8 @@
                autocomplete="off" spellcheck="false">
         <button type="button" class="btn btn--small btn--ghost" id="footage-btn">Find the mix</button>
       </div>
+      <label class="check" id="lut-row" hidden><input type="checkbox" id="lut-on" checked>
+        Correct D-Log colours (DJI’s colour file)</label>
       <p class="hint" id="footage-status">The folder with the camera's videos. In Finder, right-click it, hold Option, and choose Copy as Pathname.</p>
     </div>
     <audio id="listen" preload="auto" hidden></audio>
@@ -143,7 +145,10 @@
         <canvas id="draft" hidden></canvas>
       </div>
       <video id="player" controls playsinline hidden></video>
-      <video id="footage" muted playsinline preload="auto"></video>
+      <div class="footage-frame" id="footage-frame">
+        <video id="footage" muted playsinline preload="auto"></video>
+        <canvas id="graded" hidden></canvas>
+      </div>
       <div class="busy" id="busy" hidden></div>
     </div>
 

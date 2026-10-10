@@ -551,3 +551,40 @@ def test_leftover_half_reads_are_cleared_and_the_saved_sound_is_kept_in_bounds(t
         os.utime(f, (time.time() - age, time.time() - age))
     tidy_cache(str(cache), max_bytes=2500)
     assert sorted(os.listdir(cache)) == ["1.f32", "2.f32"]     # the oldest went
+
+
+# ── D-Log footage ────────────────────────────────────────────────────────
+def test_footage_filmed_flat_in_ten_bit_is_marked_for_colour_correction(tmp_path):
+    """DJI's flat D-Log M mode records 10-bit; its normal colour mode 8-bit."""
+    mix = music(60)
+    cam = chatter(80, seed=7)
+    cam[10 * SR:70 * SR] += room(mix)
+    folder = tmp_path / "Camera"
+    folder.mkdir()
+    write_wav(tmp_path / "cam.wav", cam)
+    write_wav(tmp_path / "mix.wav", mix)
+    # DJI's HDR mode (HLG) is 10-bit too, but it isn't D-Log and mustn't get its LUT.
+    for name, fmt, extra in [("flat.mp4", "yuv420p10le", []), ("normal.mp4", "yuv420p", []),
+                             ("hdr.mp4", "yuv420p10le", ["-x264-params", "colorprim=bt2020:"
+                                                          "transfer=arib-std-b67:colormatrix=bt2020nc"])]:
+        gv.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+                "color=c=gray:s=64x80:r=5:d=80", "-i", str(tmp_path / "cam.wav"),
+                "-c:v", "libx264", "-pix_fmt", fmt, *extra, "-c:a", "aac", "-shortest",
+                str(folder / name)], "test video")
+    found = find_mix(str(tmp_path / "mix.wav"), str(folder), str(tmp_path / "cache"))
+    flat = {m["name"]: m["log"] for m in found["matches"]}
+    assert flat == {"flat.mp4": True, "normal.mp4": False, "hdr.mp4": False}
+
+
+def test_the_colour_correction_file_is_served_to_the_page(server, tmp_path):
+    lut = tmp_path / "dlogm.cube"
+    lut.write_text("LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n")
+    server.divein.lut_path = str(lut)
+    status, _, body = fetch(server, "/api/divein/lut")
+    assert status == 200 and body.startswith(b"LUT_3D_SIZE 2")
+
+
+def test_a_missing_colour_correction_file_says_where_it_goes(server, tmp_path):
+    server.divein.lut_path = str(tmp_path / "nothing.cube")
+    status, _, body = fetch(server, "/api/divein/lut")
+    assert status == 404 and b"assets/luts" in body

@@ -68,7 +68,7 @@ def _probe(video: str) -> dict:
     clips are cut by the picture's).
     """
     result = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
-                             "stream=codec_type,start_time,duration", "-of", "json", video],
+                             "stream=codec_type,start_time,duration,pix_fmt,color_transfer", "-of", "json", video],
                             capture_output=True, text=True)
     try:
         streams = json.loads(result.stdout)["streams"]
@@ -87,11 +87,16 @@ def _probe(video: str) -> dict:
             return None
 
     audio, picture = first("audio"), first("video")
+    # DJI's flat D-Log M mode only records in 10-bit; its normal colour, 8-bit.
+    # Its HDR mode is 10-bit too, but labels itself (HLG or PQ) and isn't D-Log.
+    log = bool(picture) and any(tag in str(picture.get("pix_fmt", ""))
+                                for tag in ("10le", "10be", "p010")) \
+        and picture.get("color_transfer") not in ("arib-std-b67", "smpte2084")
     if audio is None:
-        return {"sound": False, "lead": 0.0, "duration": None}
+        return {"sound": False, "lead": 0.0, "duration": None, "log": log}
     lead = (number(audio, "start_time") or 0.0) - \
         ((number(picture, "start_time") or 0.0) if picture else 0.0)
-    return {"sound": True, "lead": lead, "duration": number(audio, "duration")}
+    return {"sound": True, "lead": lead, "duration": number(audio, "duration"), "log": log}
 
 
 _reading: dict[str, threading.Lock] = {}
@@ -351,7 +356,7 @@ def find_mix(mix_path: str, folder: str, cache_dir: str, progress=None,
         match = _locate_one(pieces, cam, mix.size / MATCH_SR)
         if match:
             match["offset"] += probe["lead"]
-            matches.append({"video": i, "name": names[i], **match})
+            matches.append({"video": i, "name": names[i], "log": probe["log"], **match})
     report(1.0, "Finished")
     return {"videos": names, "matches": matches,
             "message": describe(matches, names, silent)}
