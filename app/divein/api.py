@@ -127,8 +127,9 @@ class DiveInService:
             if method == "GET" and path == "/api/divein/defaults":
                 return h._json(200, self.defaults())
             if method == "GET" and path == "/api/divein/overview":
-                token = parse_qs(urlparse(h.path).query).get("audio", [""])[0]
-                return h._json(200, self._overview(token))
+                query = parse_qs(urlparse(h.path).query)
+                return h._json(200, self._overview(query.get("audio", [""])[0],
+                                                   query.get("per_second", [None])[0]))
             if method == "GET" and path == "/api/divein/lut":
                 if not os.path.isfile(self.lut_path):
                     return h._error(404, "DJI's D-Log M colour file isn't installed: put it in "
@@ -447,14 +448,29 @@ class DiveInService:
     # ── the mix overview (for the timeline) ──────────────────────────────
     OVERVIEW_POINTS = 1200
 
-    def _overview(self, token) -> dict:
+    DETAIL_MAX = 20                 # points a second, for the close-up
+    DETAIL_POINTS_MAX = 200_000
+
+    def _overview(self, token, per_second=None) -> dict:
         """
         How loud the whole mix is, as ~1200 points from 0 to 1, for the
         timeline you click on to place clips. Decoded at low quality (1,000
         samples a second) since only the shape matters: a 2-hour mix takes
         a few seconds.
+
+        With `per_second`, that many points for every second instead (1-20),
+        for the close-up that shows a few minutes across the whole screen.
         """
         path = self._resolve(token, "audio file")
+        points = self.OVERVIEW_POINTS
+        if per_second is not None:
+            try:
+                rate = float(per_second)
+            except ValueError:
+                rate = 1.0
+            rate = min(self.DETAIL_MAX, max(1.0, rate if math.isfinite(rate) else 1.0))
+            points = min(self.DETAIL_POINTS_MAX,
+                         max(1, int(round(self._audio_length(token) * rate))))
 
         def make():
             result = subprocess.run(
@@ -464,7 +480,7 @@ class DiveInService:
                 raise BadRequest("That audio file couldn't be read.")
             x = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / 32768.0
             duration = self._audio_length(token)
-            n = self.OVERVIEW_POINTS
+            n = points
             if x.size < n:
                 x = np.pad(x, (0, n - x.size))
             edges = np.linspace(0, x.size, n + 1).astype(int)
@@ -472,7 +488,7 @@ class DiveInService:
             top = float(np.percentile(rms, 98)) or 1.0
             peaks = np.clip(rms / top, 0, 1)
             return {"duration": duration, "peaks": [round(float(v), 3) for v in peaks]}
-        return self._overviews.get_or(path, make)
+        return self._overviews.get_or((path, points), make)
 
     def _find_transitions(self, token) -> dict:
         """Roughly where the mix moves from one record to the next (a few seconds' work)."""

@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="/static/divein.css">
 </head>
-<body>
+<body class="divein">
 
 <header class="bar">
   <div class="mark">DFI</div>
@@ -54,13 +54,7 @@
       <span class="drop-hint" id="audio-hint">Any length</span>
     </label>
 
-    <div class="timeline" id="timeline" hidden>
-      <canvas id="timeline-canvas" height="72"></canvas>
-      <div class="timeline-foot">
-        <span id="timeline-hover" class="hint">Click to add a clip. Drag a clip to move it.</span>
-        <span id="timeline-length" class="hint"></span>
-      </div>
-    </div>
+    <p class="hint" id="clips-hint" hidden>Add clips on the timeline along the bottom of the window.</p>
     <ul class="clips" id="clips"></ul>
 
     <div class="field" id="footage-row" hidden>
@@ -170,6 +164,21 @@
       <ul id="file-list"></ul>
       <a class="btn btn--small" id="zip-link" hidden>Download all</a>
     </div>
+  </section>
+
+  <section class="timeline-dock" id="timeline" hidden aria-label="Mix timeline">
+    <div class="timeline-bar">
+      <span class="hint" id="view-range"></span>
+      <span class="hint timeline-hover" id="timeline-hover"></span>
+      <div class="segmented segmented--small" role="radiogroup" aria-label="Close-up shows" id="zoom-choice">
+        <button type="button" role="radio" data-value="60" aria-checked="false">1 min</button>
+        <button type="button" role="radio" data-value="240" aria-checked="true">4 min</button>
+        <button type="button" role="radio" data-value="900" aria-checked="false">15 min</button>
+      </div>
+      <span class="hint" id="timeline-length"></span>
+    </div>
+    <canvas id="overview-canvas" title="The whole mix: click or drag to choose what the close-up shows"></canvas>
+    <canvas id="closeup-canvas"></canvas>
   </section>
 </main>
 

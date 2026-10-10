@@ -27,6 +27,8 @@ const state = {
   starts: [],             // clip start times, in seconds
   selected: 0,            // which clip the preview and "moment" use
   overview: null,         // {duration, peaks}
+  detail: null,           // the same, finer, for the close-up
+  view: { start: 0, span: 240 },   // the close-up: which part of the mix it shows
   footage: null,          // {audio, matches}: where the mix was filmed
   transitions: [],        // rough seconds where one record gives way to the next
   listening: null,        // index of the clip playing, or null
@@ -366,6 +368,8 @@ async function useAudio(file) {
   player.src = URL.createObjectURL(file);
 
   state.overview = null;
+  state.detail = null;
+  state.view.start = 0;
   state.transitions = [];
   state.footage = null;
   show($('lut-row'), false);
@@ -375,6 +379,7 @@ async function useAudio(file) {
   stopListening();
   state.starts = state.starts.filter((s) => s < state.audio.duration);
   show($('timeline'), true);
+  show($('clips-hint'), true);
   $('timeline-hover').textContent = 'Drawing the mix…';
   startsChanged();
   const token = state.audio.token;
@@ -387,14 +392,23 @@ async function useAudio(file) {
     }
   } catch { /* the timeline still works without the shape */ }
   findTransitions(token);                 // a few seconds more; drawn when ready
+  findDetail(token);
   $('timeline-hover').textContent = timelineHint();
   drawTimeline();
 }
 
 /* ── the mix timeline ────────────────────────────────────────────── */
+/*
+ * Docked along the bottom of the window, like a video editor's. Two strips:
+ * the whole mix (click or drag to choose where to look), and a close-up of a
+ * few minutes of it, where clips are added and moved.
+ */
+
+const DETAIL_PER_SECOND = 8;              // close-up waveform points a second
+const ZOOMS = [60, 240, 900];             // close-up spans on offer, in seconds
 
 function timelineHint() {
-  return 'Click to add a clip. Drag a clip to move it.'
+  return 'Close-up: click to add a clip, drag one to move it; ← → nudge the selected clip.'
     + (state.transitions.length ? ' Dotted lines: likely transitions.' : '');
 }
 
@@ -409,84 +423,157 @@ async function findTransitions(token) {
   } catch { /* the timeline works without them */ }
 }
 
+/** The close-up's finer waveform: a few seconds' work, drawn when it arrives. */
+async function findDetail(token) {
+  try {
+    const response = await fetch(`/api/divein/overview?audio=${encodeURIComponent(token)}`
+      + `&per_second=${DETAIL_PER_SECOND}`);
+    const detail = response.ok ? await response.json() : null;
+    if (!state.audio || state.audio.token !== token || !detail || !Array.isArray(detail.peaks)) return;
+    state.detail = detail;
+    drawTimeline();
+  } catch { /* the close-up uses the coarse shape instead */ }
+}
+
 function duration() {
   return (state.overview && state.overview.duration) || (state.audio && state.audio.duration) || 0;
 }
 
-function drawTimeline() {
-  const canvas = $('timeline-canvas');
+/** Keep the close-up inside the mix, and no wider than it. */
+function clampView() {
   const total = duration();
+  state.view.span = Math.min(state.view.span, total || state.view.span);
+  state.view.start = Math.max(0, Math.min(state.view.start, Math.max(0, total - state.view.span)));
+}
+
+/** Move the close-up so moment `t` is in its middle. */
+function centreView(t) {
+  state.view.start = t - state.view.span / 2;
+  clampView();
+}
+
+/** Make sure the selected clip is in the close-up, moving it only if needed. */
+function revealSelected() {
+  const start = state.starts[state.selected];
+  if (start === undefined) return;
+  const { start: v0, span } = state.view;
+  if (start < v0 || start + clipLength() > v0 + span) centreView(start + clipLength() / 2);
+}
+
+function setZoom(span) {
+  const middle = state.view.start + state.view.span / 2;
+  state.view.span = span;
+  centreView(middle);
+  for (const b of document.querySelectorAll('#zoom-choice button')) {
+    b.setAttribute('aria-checked', String(Number(b.dataset.value) === span));
+  }
+  drawTimeline();
+}
+
+/** Size a canvas for the screen and hand back its drawing context. */
+function prepare(canvas) {
   const ratio = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
-  if (!w) return;
+  if (!w) return null;
   canvas.width = w * ratio; canvas.height = h * ratio;
   const ctx = canvas.getContext('2d');
   ctx.scale(ratio, ratio);
   ctx.clearRect(0, 0, w, h);
-  $('timeline-length').textContent = total ? timecode(total) : '';
-  if (!total) return;
+  return { ctx, w, h };
+}
 
+/** Draw moments t0..t1 of the mix onto a canvas: shape, filmed parts, transitions, clips. */
+function drawStrip(canvas, t0, t1, peaks, perSecond, close) {
+  const box = prepare(canvas);
+  if (!box) return;
+  const { ctx, w, h } = box;
+  const span = t1 - t0;
+  const xOf = (t) => (t - t0) / span * w;
   const accent = ACCENTS[state.colour] || ACCENTS.yellow;
-  const peaks = (state.overview && state.overview.peaks) || [];
-  // The mix's loudness, as a mirrored shape.
+
   ctx.fillStyle = 'rgba(255,255,255,0.28)';
   for (let x = 0; x < w; x++) {
-    const v = peaks.length ? peaks[Math.min(peaks.length - 1, Math.floor(x / w * peaks.length))] : 0.15;
+    const i = Math.floor((t0 + (x + 0.5) / w * span) * perSecond);
+    const v = peaks.length ? peaks[Math.max(0, Math.min(peaks.length - 1, i))] : 0.15;
     const bar = Math.max(1, v * (h - 12));
     ctx.fillRect(x, (h - bar) / 2, 1, bar);
   }
-  // Likely transitions: dotted lines.
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  if (state.footage && state.audio && state.footage.audio === state.audio.token) {
+    ctx.fillStyle = '#fff';                         // filmed: a strip along the bottom
+    for (const m of state.footage.matches) {
+      const a = xOf(m.mix_from), b = xOf(m.mix_to);
+      if (b > 0 && a < w) ctx.fillRect(a, h - 4, Math.max(2, b - a), 4);
+    }
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';       // likely transitions: dotted
   ctx.lineWidth = 1;
   ctx.setLineDash([2, 3]);
   for (const t of state.transitions) {
-    const x = Math.round(t / total * w) + 0.5;
+    if (t < t0 || t > t1) continue;
+    const x = Math.round(xOf(t)) + 0.5;
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
   }
   ctx.setLineDash([]);
-  // The clips.
   const len = clipLength();
   state.starts.forEach((start, i) => {
-    const x0 = start / total * w, x1 = Math.min(w, (start + len) / total * w);
+    if (start + len < t0 || start > t1) return;
+    const a = xOf(start), b = xOf(start + len);
+    ctx.fillStyle = accent;
     ctx.globalAlpha = i === state.selected ? 0.5 : 0.3;
-    ctx.fillStyle = accent;
-    ctx.fillRect(x0, 0, Math.max(2, x1 - x0), h);
+    ctx.fillRect(a, 0, Math.max(2, b - a), h);
     ctx.globalAlpha = 1;
-    ctx.fillRect(x0, 0, 2, h);
-    ctx.fillStyle = '#000';
-    ctx.font = 'bold 11px -apple-system, sans-serif';
-    ctx.fillStyle = accent;
-    ctx.fillRect(x0, 0, 16, 16);
-    ctx.fillStyle = '#000';
-    ctx.fillText(String(i + 1), x0 + 4.5, 12);
-  });
-  // The parts of the mix the camera filmed: a strip along the bottom.
-  if (state.footage && state.audio && state.footage.audio === state.audio.token) {
-    ctx.fillStyle = '#fff';
-    for (const m of state.footage.matches) {
-      const x0 = m.mix_from / total * w, x1 = m.mix_to / total * w;
-      ctx.fillRect(x0, h - 4, Math.max(2, x1 - x0), 4);
+    ctx.fillRect(a, 0, 2, h);
+    if (close) {                                    // number tags only where there's room
+      ctx.fillRect(a, 0, 18, 18);
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 12px -apple-system, sans-serif';
+      ctx.fillText(String(i + 1), a + 5, 13.5);
     }
-  }
-  // Where playback is.
-  const player = $('listen');
+  });
+  const player = $('listen');                       // where playback is
   if (state.listening !== null && !player.paused) {
-    const x = player.currentTime / total * w;
     ctx.fillStyle = '#fff';
-    ctx.fillRect(x, 0, 2, h);
+    ctx.fillRect(xOf(player.currentTime), 0, 2, h);
   }
+  return { ctx, w, h, xOf };
 }
 
-/**
- * The clip under `x`, or -1. On a long mix a clip is only a few pixels wide,
- * so each one can be grabbed anywhere from just before its line to the end
- * of its number tag; where two overlap, the one whose line is nearer wins.
- */
+function drawTimeline() {
+  const total = duration();
+  $('timeline-length').textContent = total ? timecode(total) : '';
+  if (!total) return;
+  clampView();
+  const { start, span } = state.view;
+  const coarse = (state.overview && state.overview.peaks) || [];
+  const whole = drawStrip($('overview-canvas'), 0, total, coarse, coarse.length / total, false);
+  if (whole) {                                      // the close-up's window on the whole
+    const a = whole.xOf(start), b = whole.xOf(start + span);
+    whole.ctx.strokeStyle = '#fff';
+    whole.ctx.lineWidth = 1.5;
+    whole.ctx.strokeRect(a + 0.75, 0.75, Math.max(3, b - a) - 1.5, whole.h - 1.5);
+  }
+  const fine = state.detail ? state.detail.peaks : coarse;
+  const rate = state.detail ? state.detail.peaks.length / total : coarse.length / total;
+  const close = drawStrip($('closeup-canvas'), start, start + span, fine, rate, true);
+  if (close) {                                      // time marks every so often
+    const step = span <= 90 ? 10 : span <= 300 ? 30 : 60;
+    close.ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    close.ctx.font = '11px -apple-system, sans-serif';
+    for (let t = Math.ceil(start / step) * step; t <= start + span; t += step) {
+      const x = close.xOf(t);
+      close.ctx.fillRect(x, close.h - 16, 1, 8);      // clear of the "filmed" strip
+      close.ctx.fillText(timecode(t), x + 3, close.h - 8);
+    }
+  }
+  $('view-range').textContent = `${timecode(start)} – ${timecode(start + span)}`;
+}
+
+/** The clip under `x` in the close-up, or -1 (nearest line wins where they overlap). */
 function clipAt(x, w) {
-  const total = duration(), len = clipLength();
+  const { start: v0, span } = state.view, len = clipLength();
   let best = -1, nearest = Infinity;
   state.starts.forEach((start, i) => {
-    const x0 = start / total * w, x1 = (start + len) / total * w;
+    const x0 = (start - v0) / span * w, x1 = (start + len - v0) / span * w;
     if (x >= x0 - 8 && x <= Math.max(x1, x0 + 22) && Math.abs(x - x0) < nearest) {
       best = i; nearest = Math.abs(x - x0);
     }
@@ -495,12 +582,34 @@ function clipAt(x, w) {
 }
 
 function wireTimeline() {
-  const canvas = $('timeline-canvas');
+  // The whole mix: click or drag to move the close-up there.
+  const whole = $('overview-canvas');
+  let scrubbing = false;
+  const lookAt = (e) => {
+    const box = whole.getBoundingClientRect();
+    centreView(Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)) * duration());
+    drawTimeline();
+  };
+  whole.addEventListener('pointerdown', (e) => {
+    if (!duration()) return;
+    scrubbing = true;
+    whole.setPointerCapture(e.pointerId);
+    lookAt(e);
+  });
+  whole.addEventListener('pointermove', (e) => { if (scrubbing) lookAt(e); });
+  const stopScrub = () => { scrubbing = false; };
+  whole.addEventListener('pointerup', stopScrub);
+  whole.addEventListener('pointercancel', stopScrub);
+
+  // The close-up: add and move clips.
+  const canvas = $('closeup-canvas');
   let drag = null;
   const timeAt = (e) => {
     const box = canvas.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)) * duration();
+    const f = Math.max(0, Math.min(1, (e.clientX - box.left) / box.width));
+    return state.view.start + f * state.view.span;
   };
+  const tenth = (t) => Math.round(t * 10) / 10;      // fine placement, to a tenth of a second
   canvas.addEventListener('pointerdown', (e) => {
     if (!duration()) return;
     const box = canvas.getBoundingClientRect();
@@ -508,11 +617,11 @@ function wireTimeline() {
     const t = timeAt(e);
     if (i >= 0) {
       drag = { i, offset: t - state.starts[i], moved: false };
-      selectClip(i);
+      selectClip(i, false);
     } else {
-      const start = Math.min(Math.round(t), Math.max(0, Math.floor(duration() - clipLength())));
+      const start = Math.min(tenth(t), Math.max(0, duration() - clipLength()));
       state.starts.push(start);
-      selectClip(state.starts.length - 1);
+      selectClip(state.starts.length - 1, false);
       drag = { i: state.starts.length - 1, offset: t - start, moved: true };
       startsChanged();
     }
@@ -521,17 +630,16 @@ function wireTimeline() {
   });
   canvas.addEventListener('pointermove', (e) => {
     const t = timeAt(e);
-    const box0 = canvas.getBoundingClientRect();
-    const near = state.transitions.some((s) => Math.abs(s - t) / duration() * box0.width < 5);
+    const box = canvas.getBoundingClientRect();
+    const near = state.transitions.some((s) => Math.abs(s - t) / state.view.span * box.width < 5);
     $('timeline-hover').textContent = duration()
-      ? `${timecode(t)}${near ? ' — likely transition' : ''} — click to add a clip, drag to move one` : '';
+      ? `${timecode(t)}${near ? ' — likely transition' : ''}` : '';
     if (!drag) {
-      const box = canvas.getBoundingClientRect();
       canvas.classList.toggle('is-over-clip', clipAt(e.clientX - box.left, box.width) >= 0);
       return;
     }
     const max = Math.max(0, duration() - clipLength());
-    state.starts[drag.i] = Math.round(Math.min(max, Math.max(0, t - drag.offset)));
+    state.starts[drag.i] = tenth(Math.min(max, Math.max(0, t - drag.offset)));
     drag.moved = true;
     renderClips();
     drawTimeline();
@@ -547,11 +655,45 @@ function wireTimeline() {
   canvas.addEventListener('pointerleave', () => {
     if (!drag) $('timeline-hover').textContent = timelineHint();
   });
+  // Scroll sideways (or up and down) to move along; pinch to zoom.
+  canvas.addEventListener('wheel', (e) => {
+    if (!duration()) return;
+    e.preventDefault();
+    if (e.ctrlKey) {
+      const factor = Math.exp(e.deltaY * 0.01);
+      const middle = state.view.start + state.view.span / 2;
+      state.view.span = Math.max(20, Math.min(duration(), state.view.span * factor));
+      centreView(middle);
+    } else {
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      state.view.start += delta / canvas.clientWidth * state.view.span;
+      clampView();
+    }
+    drawTimeline();
+  }, { passive: false });
+
+  for (const b of document.querySelectorAll('#zoom-choice button')) {
+    b.addEventListener('click', () => setZoom(Number(b.dataset.value)));
+  }
+  // ← → nudge the selected clip by a second (with shift, five).
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (e.target.closest && e.target.closest('input, textarea, select, [role=radio]')) return;
+    if (!state.starts.length || !duration()) return;
+    e.preventDefault();
+    const step = (e.shiftKey ? 5 : 1) * (e.key === 'ArrowLeft' ? -1 : 1);
+    const max = Math.max(0, duration() - clipLength());
+    const i = state.selected;
+    state.starts[i] = Math.min(max, Math.max(0, Math.round((state.starts[i] + step) * 10) / 10));
+    revealSelected();
+    startsChanged();
+  });
   window.addEventListener('resize', drawTimeline);
 }
 
-function selectClip(i) {
+function selectClip(i, reveal = true) {
   state.selected = Math.max(0, Math.min(i, state.starts.length - 1));
+  if (reveal) revealSelected();
   renderClips();
   drawTimeline();
   showFootage();

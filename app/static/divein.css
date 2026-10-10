@@ -102,16 +102,30 @@ input[type=range] { accent-color: var(--accent); }
 .control-label { margin: .25rem 0 .35rem; }
 
 /* ── The mix timeline ─────────────────────────────────────────────── */
-.timeline { margin-top: .75rem; }
-#timeline-canvas {
-  display: block; width: 100%; height: 88px; cursor: crosshair;
-  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
-  touch-action: none;
+/* Dive In uses the whole width: the timeline wants every pixel. */
+body.divein main { max-width: 1680px; }
+body.divein .frame, body.divein .footage-frame {
+  width: min(100%, calc((100vh - 29rem) * 4 / 5));     /* room for the docked timeline */
 }
-#timeline-canvas.is-over-clip { cursor: grab; }
-#timeline-canvas.is-moving { cursor: grabbing; }
-.timeline-foot { display: flex; justify-content: space-between; margin-top: .3rem; }
-.timeline-foot .hint { margin: 0; font-variant-numeric: tabular-nums; }
+
+/* ── The mix timeline, docked along the bottom like a video editor's ── */
+.timeline-dock {
+  grid-column: 1 / -1; position: sticky; bottom: 0; z-index: 5;
+  padding: .6rem .9rem .8rem; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 -10px 30px rgba(0,0,0,.45);
+}
+.timeline-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: .45rem; }
+.timeline-bar .hint { margin: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.timeline-bar .timeline-hover { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+#overview-canvas, #closeup-canvas {
+  display: block; width: 100%; touch-action: none;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+}
+#overview-canvas { height: 34px; cursor: pointer; margin-bottom: .4rem; }
+#closeup-canvas { height: 110px; cursor: crosshair; }
+#closeup-canvas.is-over-clip { cursor: grab; }
+#closeup-canvas.is-moving { cursor: grabbing; }
 
 .clips { list-style: none; margin: .6rem 0 0; padding: 0; }
 .clips li {

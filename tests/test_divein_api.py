@@ -466,6 +466,22 @@ def test_the_mix_overview_shows_where_it_is_loud(server, two_part_mix):
     assert np.mean(peaks[half + 5:]) > 5 * np.mean(peaks[: half - 5])
 
 
+def test_a_detailed_overview_can_be_had_for_the_close_up(server, two_part_mix):
+    """The close-up shows a few minutes across the whole screen: it needs more points."""
+    token = raw_upload(server, "audio", "mix.wav", two_part_mix)["token"]
+    data = json.load(get(server, f"/api/divein/overview?audio={token}&per_second=10"))
+    peaks = data["peaks"]
+    assert len(peaks) == 200
+    assert np.mean(peaks[110:]) > 5 * np.mean(peaks[:90])
+
+
+@pytest.mark.parametrize("asked", ["0", "-3", "abc", "1000"])
+def test_a_strange_detail_is_kept_within_bounds(server, two_part_mix, asked):
+    token = raw_upload(server, "audio", "mix.wav", two_part_mix)["token"]
+    data = json.load(get(server, f"/api/divein/overview?audio={token}&per_second={asked}"))
+    assert 20 <= len(data["peaks"]) <= 20 * 20
+
+
 def test_the_overview_of_an_unknown_file_is_refused(server):
     with pytest.raises(urllib.error.HTTPError) as caught:
         get(server, "/api/divein/overview?audio=nope.mp3")
