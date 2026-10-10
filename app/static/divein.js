@@ -1216,6 +1216,33 @@ function drawGraded() {
   const uw = picture > frame ? frame / picture : 1, vh = picture > frame ? 1 : picture / frame;
   gl.uniform4f(grade.crop, (1 - uw) / 2, (1 - vh) / 2, uw, vh);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  checkGradeWorks(gl, w, h);
+}
+
+/**
+ * Some browsers (Safari with some HEVC video) hand WebGL blank frames. If the
+ * corrected picture keeps coming out completely black while the video has a
+ * picture, give up on correcting the preview and show the plain footage.
+ */
+function checkGradeWorks(gl, w, h) {
+  if (grade.verified || grade.problem) return;
+  const pixel = new Uint8Array(4);
+  let lit = false;
+  for (const fx of [0.25, 0.5, 0.75]) {
+    for (const fy of [0.25, 0.5, 0.75]) {
+      gl.readPixels(Math.floor(w * fx), Math.floor(h * fy), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      if (pixel[0] + pixel[1] + pixel[2] > 0) lit = true;
+    }
+  }
+  if (lit) { grade.verified = true; return; }
+  grade.blank = (grade.blank || 0) + 1;
+  if (grade.blank >= 3) {                 // drawn only on new frames, so 3 is plenty
+    grade.problem = 'This browser can’t show the colour correction in the preview. '
+      + 'The export still corrects it.';
+    grade.loop = null;
+    show($('graded'), false);
+    $('footage-status').textContent = grade.problem;
+  }
 }
 
 /** Redraw only when there's a new frame to show (or the size changed). */
