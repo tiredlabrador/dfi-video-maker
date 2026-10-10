@@ -27,6 +27,7 @@ const state = {
   starts: [],             // clip start times, in seconds
   selected: 0,            // which clip the preview and "moment" use
   overview: null,         // {duration, peaks}
+  footage: null,          // {audio, matches}: where the mix was filmed
   listening: null,        // index of the clip playing, or null
   // The quick draft
   photoEl: null,
@@ -120,7 +121,7 @@ function save() {
       // Saved under a new name: an older saved 'kicks' predates Volume
       // becoming the default, so it's left behind rather than carried over.
       colour: state.colour, rings_follow: state.motion, twitch: $('twitch').checked,
-      overrides: $('overrides').value,
+      overrides: $('overrides').value, footage_folder: $('footage-folder').value,
     }));
   } catch { /* private window: fine */ }
 }
@@ -135,6 +136,7 @@ function restore() {
   $('rings-on').checked = saved.rings ?? true;
   $('twitch').checked = saved.twitch ?? true;
   $('overrides').value = saved.overrides ?? '{}';
+  $('footage-folder').value = saved.footage_folder ?? '';
   state.colour = saved.colour || 'yellow';
   state.motion = saved.rings_follow || 'level';
   setSegment('colour-choice', state.colour);
@@ -363,6 +365,10 @@ async function useAudio(file) {
   player.src = URL.createObjectURL(file);
 
   state.overview = null;
+  state.footage = null;
+  showFootage();
+  $('footage-status').textContent = FOOTAGE_HINT;
+  show($('footage-row'), true);
   stopListening();
   state.starts = state.starts.filter((s) => s < state.audio.duration);
   show($('timeline'), true);
@@ -425,6 +431,14 @@ function drawTimeline() {
     ctx.fillStyle = '#000';
     ctx.fillText(String(i + 1), x0 + 4.5, 12);
   });
+  // The parts of the mix the camera filmed: a strip along the bottom.
+  if (state.footage && state.audio && state.footage.audio === state.audio.token) {
+    ctx.fillStyle = '#fff';
+    for (const m of state.footage.matches) {
+      const x0 = m.mix_from / total * w, x1 = m.mix_to / total * w;
+      ctx.fillRect(x0, h - 4, Math.max(2, x1 - x0), 4);
+    }
+  }
   // Where playback is.
   const player = $('listen');
   if (state.listening !== null && !player.paused) {
@@ -477,6 +491,7 @@ function wireTimeline() {
     drag.moved = true;
     renderClips();
     drawTimeline();
+    if (drag.i === state.selected) showFootage(true);
   });
   const end = () => {
     if (drag && drag.moved) startsChanged();
@@ -495,6 +510,7 @@ function selectClip(i) {
   state.selected = Math.max(0, Math.min(i, state.starts.length - 1));
   renderClips();
   drawTimeline();
+  showFootage();
   if ($('scrub-on').checked) scheduleStill(0);
 }
 
@@ -505,6 +521,7 @@ function startsChanged() {
   renderClips();
   drawTimeline();
   updateScrub();
+  showFootage();
   if ($('scrub-on').checked) scheduleStill(0);
 }
 
@@ -518,6 +535,7 @@ function startsFromText() {
   renderClips();
   drawTimeline();
   updateScrub();
+  showFootage();
   return true;
 }
 
@@ -570,6 +588,7 @@ function toggleListen(i) {
   const tick = () => {
     if (state.listening !== i) return;
     if (player.paused || player.currentTime >= state.starts[i] + clipLength()) { stopListening(); return; }
+    followListening();
     drawTimeline();
     requestAnimationFrame(tick);
   };
@@ -580,6 +599,7 @@ function toggleListen(i) {
 function stopListening() {
   $('listen').pause();
   state.listening = null;
+  showFootage();                          // back to the clip's first frame
   renderClips();
   drawTimeline();
 }
@@ -749,11 +769,108 @@ function showFiles(job, kind) {
 
 function playVideo(url) {
   const player = $('player');
+  $('stage').classList.remove('is-footage');      // the finished video takes the stage
+  $('footage').pause();
   show($('frame'), false);
   show($('stage-empty'), false);
   player.src = url;
   show(player, true);
   player.play().catch(() => {});
+}
+
+/* ── the camera footage in the preview ───────────────────────────── */
+
+/** Where moment `t` of the mix is in the footage: {video, time}, or null if unfilmed. */
+function footageAt(t) {
+  if (!state.footage || !state.audio || state.footage.audio !== state.audio.token) return null;
+  const m = state.footage.matches.find((f) => t >= f.mix_from && t < f.mix_to);
+  return m ? { video: m.video, time: m.offset + m.rate * t } : null;
+}
+
+/**
+ * Show the footage at the selected clip's start, if that moment was filmed.
+ * `rough` while dragging: the nearest keyframe is enough and much quicker.
+ */
+function showFootage(rough = false) {
+  const el = $('footage');
+  const start = state.starts.length ? state.starts[state.selected] : null;
+  const at = start === null || state.format !== 'portrait' ? null : footageAt(start);
+  $('stage').classList.toggle('is-footage', Boolean(at));
+  if (!at) { el.pause(); return; }
+  $('player').pause();
+  const src = `/api/divein/footage/video?audio=${encodeURIComponent(state.audio.token)}&video=${at.video}`;
+  if (el.getAttribute('src') !== src) el.src = src;
+  if (state.listening !== null) return;              // listening keeps it in step itself
+  el.pause();
+  if (rough && el.fastSeek) el.fastSeek(at.time);
+  else el.currentTime = at.time;
+}
+
+/** While a clip plays, keep the footage with the mix (re-aligning if it slips). */
+function followListening() {
+  const el = $('footage');
+  if (!$('stage').classList.contains('is-footage')) return;
+  const at = footageAt($('listen').currentTime);
+  if (!at) { el.pause(); return; }
+  if (Math.abs(el.currentTime - at.time) > 0.12) el.currentTime = at.time;
+  if (el.paused) el.play().catch(() => {});
+}
+
+/* ── finding the mix in camera footage ───────────────────────────── */
+
+const FOOTAGE_HINT = 'The folder with the camera\u2019s videos. In Finder, right-click it, '
+  + 'hold Option, and choose Copy as Pathname.';
+let footagePolling = null;
+
+async function findFootage() {
+  setError('');
+  if (!state.audio) { setError('Choose the mix first.'); return; }
+  const folder = $('footage-folder').value.trim();
+  if (!folder) { setError('Paste the footage folder\u2019s location first.'); return; }
+  save();
+  const token = state.audio.token;
+  state.footage = null;                   // the old strip belongs to the old folder
+  drawTimeline();
+  showFootage();
+  const status = $('footage-status');
+  const button = $('footage-btn');
+  button.disabled = true;
+  status.textContent = 'Starting\u2026';
+  let job;
+  try {
+    job = await (await postJSON('/api/divein/footage', { audio: token, folder })).json();
+  } catch (error) {
+    setError(error.message); status.textContent = FOOTAGE_HINT; button.disabled = false;
+    return;
+  }
+  clearInterval(footagePolling);
+  footagePolling = setInterval(async () => {
+    let s;
+    try { s = await (await fetch(`/api/divein/jobs/${job.id}`)).json(); } catch { return; }
+    const current = state.audio && state.audio.token === token;
+    if (s.status !== 'done' && s.status !== 'error') {
+      if (current) {
+        // No percentage: reading a video's sound is one long step.
+        status.textContent = `${s.message || 'Listening'}\u2026 `
+          + '(the first look at each video takes a minute or two)';
+      }
+      return;
+    }
+    clearInterval(footagePolling);
+    button.disabled = false;
+    if (!current) return;                 // a different mix was chosen meanwhile
+    if (s.status === 'error') {
+      setError(s.error || 'Looking through the footage failed.');
+      status.textContent = FOOTAGE_HINT;
+      return;
+    }
+    state.footage = { audio: token, matches: s.footage.matches };
+    status.textContent = s.footage.matches.length
+      ? `${s.footage.message} The white strip under the mix shows the filmed parts.`
+      : s.footage.message;
+    drawTimeline();
+    showFootage();
+  }, 500);
 }
 
 /* ── wiring ──────────────────────────────────────────────────────── */
@@ -805,6 +922,7 @@ function designChanged(delay = 250) {
 
 function setFormat(value) {
   state.format = value;
+  showFootage();
   $('frame').classList.toggle('is-square', value === 'square');
   clampCrop();
   show($('draft'), false);
@@ -865,6 +983,8 @@ document.addEventListener('DOMContentLoaded', () => {
     $('overrides').value = '{}'; state.overrides = {}; prepareDraftSources(); designChanged(0);
   });
 
+  $('footage-btn').addEventListener('click', findFootage);
+  $('footage-folder').addEventListener('keydown', (e) => { if (e.key === 'Enter') findFootage(); });
   $('preview-btn').addEventListener('click', () => startJob('preview'));
   $('export-btn').addEventListener('click', () => startJob('export'));
   renderClips();

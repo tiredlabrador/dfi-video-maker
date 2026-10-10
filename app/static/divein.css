@@ -14,6 +14,10 @@ a.tab { text-decoration: none; display: inline-block; }
   box-shadow: 0 0 0 3px rgba(255,225,77,.14);
 }
 
+.footage-find { display: flex; gap: .5rem; }
+.footage-find input { flex: 1; min-width: 0; }
+.footage-find .btn { white-space: nowrap; }
+
 .field.inline { display: flex; align-items: center; gap: .75rem; margin-top: .75rem; }
 .field.inline label { margin: 0; }
 .field.inline input[type=range] { flex: 1; }
@@ -57,6 +61,13 @@ input[type=range] { accent-color: var(--accent); }
   box-shadow: 0 0 0 1px rgba(255,255,255,.25);
 }
 #player { max-height: 72vh; }
+/* The camera footage at the selected clip: replaces the photo preview while shown. */
+#footage { display: none; }
+.stage--divein.is-footage > :not(#footage):not(.busy) { display: none !important; }
+.stage--divein.is-footage #footage {
+  display: block; aspect-ratio: 4 / 5; width: min(100%, calc(72vh * 4 / 5));
+  object-fit: cover; background: #000;
+}
 .busy {
   position: absolute; top: .6rem; right: .6rem; width: 14px; height: 14px;
   border: 2px solid rgba(255,255,255,.25); border-top-color: var(--accent);

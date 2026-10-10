@@ -62,6 +62,16 @@
       </div>
     </div>
     <ul class="clips" id="clips"></ul>
+
+    <div class="field" id="footage-row" hidden>
+      <label for="footage-folder">Camera footage (optional)</label>
+      <div class="footage-find">
+        <input type="text" id="footage-folder" placeholder="/Volumes/…/10.02 - Pirate October"
+               autocomplete="off" spellcheck="false">
+        <button type="button" class="btn btn--small btn--ghost" id="footage-btn">Find the mix</button>
+      </div>
+      <p class="hint" id="footage-status">The folder with the camera's videos. In Finder, right-click it, hold Option, and choose Copy as Pathname.</p>
+    </div>
     <audio id="listen" preload="auto" hidden></audio>
 
     <details class="advanced type-times">
@@ -133,6 +143,7 @@
         <canvas id="draft" hidden></canvas>
       </div>
       <video id="player" controls playsinline hidden></video>
+      <video id="footage" muted playsinline preload="auto"></video>
       <div class="busy" id="busy" hidden></div>
     </div>
 

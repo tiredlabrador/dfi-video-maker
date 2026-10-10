@@ -29,6 +29,7 @@ import generate_video as gv
 from app.divein.audio import analyse, decode_excerpt
 from app.divein.compose import Scene, font_path, load_photo, missing_glyphs
 from app.divein.config import DEFAULTS, ConfigError, merge_config
+from app.divein.footage import FootageError, find_mix, list_videos, tidy_cache
 from app.divein.render import render_still, render_video
 
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024 * 1024        # 3GB: any mix, any format
@@ -90,7 +91,7 @@ def _scrub_paths(message: str) -> str:
 
 
 class DiveInService:
-    def __init__(self, work_dir: str, jobs):
+    def __init__(self, work_dir: str, jobs, footage_cache: str | None = None):
         self.root = os.path.join(work_dir, "divein")
         self.uploads = os.path.join(self.root, "uploads")
         self.outputs = os.path.join(self.root, "output")
@@ -103,6 +104,11 @@ class DiveInService:
         self._overviews = _LRU(8)
         self._audio = _LRU(6)
         self._files: dict[str, list] = {}
+        self._footage_jobs: set[str] = set()
+        self._footage: dict[str, list[str]] = {}         # mix token -> its videos, once found
+        self.footage_cache = footage_cache or os.path.join(self.root, "footage-audio")
+        self._footage_latest: dict[str, object] = {}     # mix token -> newest search
+        tidy_cache(self.footage_cache)
         self._durations: dict[str, float] = {}
         self._still_lock = threading.Lock()
         self._zip_lock = threading.Lock()
@@ -117,6 +123,8 @@ class DiveInService:
             if method == "GET" and path == "/api/divein/overview":
                 token = parse_qs(urlparse(h.path).query).get("audio", [""])[0]
                 return h._json(200, self._overview(token))
+            if method == "GET" and path == "/api/divein/footage/video":
+                return self._footage_video(h)
             if method == "GET" and path.startswith("/api/divein/jobs/"):
                 return self._job_route(h, path[len("/api/divein/jobs/"):])
             if method == "POST" and path == "/api/divein/upload":
@@ -134,8 +142,10 @@ class DiveInService:
                 payload = self._read_json(h)
                 job = self._start(payload, preview=path.endswith("preview"))
                 return h._json(202, self._job_payload(job))
+            if method == "POST" and path == "/api/divein/footage":
+                return h._json(202, self._job_payload(self._find_footage(self._read_json(h))))
             return h._error(404, "Not found.")
-        except (BadRequest, ConfigError) as exc:
+        except (BadRequest, ConfigError, FootageError) as exc:
             return h._error(400, str(exc))
         except Exception as exc:                       # noqa: BLE001
             # Never leave the page with a dropped connection: say something.
@@ -517,8 +527,51 @@ class DiveInService:
         self._files[job.id] = files
         return job
 
+    # ── finding the mix in camera footage ────────────────────────────────
+    def _find_footage(self, d: dict):
+        """Start listening for the mix in every video in a folder on this Mac."""
+        if not d.get("audio"):
+            raise BadRequest("Choose the mix's audio file first.")
+        mix = self._resolve(d.get("audio"), "audio file")
+        folder = str(d.get("folder", ""))
+        videos = list_videos(folder)                     # fail now, not mid-job
+        token = d["audio"]
+
+        ticket = object()
+        self._footage_latest[token] = ticket
+
+        def work(progress):
+            found = find_mix(mix, folder, self.footage_cache, progress, videos=videos)
+            # The page plays these by number, so only the newest search's list
+            # counts: an older, slower search finishing later mustn't replace it.
+            if self._footage_latest.get(token) is ticket:
+                self._footage[token] = videos
+            return found
+        job = self.jobs.submit("divein", work, label="Finding the mix in the footage")
+        self._files[job.id] = []
+        self._footage_jobs.add(job.id)
+        return job
+
+    def _footage_video(self, h):
+        """One of the searched videos, by number, for the page to play."""
+        # A <video> on another website sends no Origin header, but browsers
+        # do say where a request came from in Sec-Fetch-Site.
+        if h.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
+            return h._error(403, "Only Dive In itself can show the footage.")
+        query = parse_qs(urlparse(h.path).query)
+        videos = self._footage.get(query.get("audio", [""])[0], [])
+        try:
+            path = videos[int(query.get("video", [""])[0])]
+        except (ValueError, IndexError):
+            return h._error(404, "No such video. Try Find the mix again.")
+        if int(query["video"][0]) < 0 or not os.path.isfile(path):
+            return h._error(404, "No such video. Is the drive plugged in?")
+        return h._send_file(path, "video/mp4", os.path.basename(path))
+
     def _job_payload(self, job) -> dict:
         data = job.as_dict()
+        if job.id in self._footage_jobs and job.status == "done":
+            data["footage"] = job.result
         files = self._files.get(job.id, [])
         data["files"] = [{"name": os.path.basename(p),
                           "url": f"/api/divein/jobs/{job.id}/files/{i}",
@@ -533,7 +586,7 @@ class DiveInService:
     def _zip_route(self, h, job_id: str):
         """Every file from an export, in one zip."""
         job = self.jobs.get(job_id)
-        if job is None or job.id not in self._files:
+        if job is None or not self._files.get(job.id):
             return h._error(404, "No such job.")
         if job.status != "done":
             return h._error(409, "That isn't finished yet.")

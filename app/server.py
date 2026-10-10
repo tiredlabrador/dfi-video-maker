@@ -37,6 +37,7 @@ REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # — which is why the cap is well above a normal track but nowhere near a
 # gigabyte. Real files are 5-50MB.
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024      # 100 MB
+MAX_OPEN_RANGE = 16 * 1024 * 1024         # most sent for one "to the end" request
 
 
 def _disposition(kind: str, filename: str) -> str:
@@ -85,7 +86,9 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 if first:
                     start = int(first)
-                    end = int(last) if last else size - 1
+                    # "From here to the end" of a 17GB camera file can't be one
+                    # reply: send a piece, and the browser asks for the next.
+                    end = int(last) if last else start + MAX_OPEN_RANGE - 1
                 elif last:                       # "bytes=-500" = the last 500
                     start = max(0, size - int(last))
                 else:
@@ -101,10 +104,35 @@ class _Handler(BaseHTTPRequestHandler):
                 status = 206
                 headers["Content-Range"] = f"bytes {start}-{end}/{size}"
 
-        with open(path, "rb") as handle:
-            handle.seek(start)
-            body = handle.read(end - start + 1)
-        self._send(status, body, content_type, headers)
+        # Sent a megabyte at a time, so a huge file never sits in memory whole.
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for key, value in headers.items():
+            self.send_header(key, value)
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        remaining = end - start + 1
+        try:
+            with open(path, "rb") as handle:
+                handle.seek(start)
+                while remaining > 0:
+                    chunk = handle.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except OSError:
+            # A video player hangs up whenever you jump elsewhere; a drive can
+            # be unplugged mid-file. Either way the reply is already half sent.
+            remaining = remaining or 1
+        if remaining:
+            # Short of what was promised: hang up, so the player notices now
+            # instead of waiting for bytes that will never come.
+            self.close_connection = True
 
     def _send(self, status: int, body: bytes, content_type: str,
               extra_headers: dict | None = None) -> None:
@@ -515,7 +543,11 @@ class DFIServer(ThreadingHTTPServer):
         self.jobs = JobStore()
         self.render_service = RenderService(work_dir=work_dir)
         from app.divein.api import DiveInService      # Dive In
-        self.divein = DiveInService(self.render_service.work_dir, self.jobs)
+        # A real run's scratch folder is wiped on every start, so the camera
+        # sound it took minutes to read is kept in the Mac's own caches instead.
+        cache = os.path.expanduser("~/Library/Caches/DFI Video Maker/footage-audio") \
+            if self.render_service._owns_work_dir else None
+        self.divein = DiveInService(self.render_service.work_dir, self.jobs, cache)
         self.verbose = verbose
         self.config_overrides = config_overrides or {}
 
