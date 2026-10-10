@@ -588,3 +588,24 @@ def test_a_missing_colour_correction_file_says_where_it_goes(server, tmp_path):
     server.divein.lut_path = str(tmp_path / "nothing.cube")
     status, _, body = fetch(server, "/api/divein/lut")
     assert status == 404 and b"assets/luts" in body
+
+
+def test_a_camera_whose_sound_cannot_be_read_alone_is_still_read_the_long_way(tmp_path):
+    """Uncompressed sound (PCM) has no index-friendly AAC: ffmpeg reads the whole file."""
+    write_wav(tmp_path / "cam.wav", chatter(30))
+    video = tmp_path / "cam.mov"
+    gv.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x80:r=5:d=30",
+            "-i", str(tmp_path / "cam.wav"), "-c:v", "libx264", "-c:a", "pcm_s16le",
+            "-shortest", str(video)], "pcm video")
+    sound = camera_audio(str(video), str(tmp_path / "cache"))
+    assert sound.size == pytest.approx(30 * SR, abs=SR // 10)
+
+
+def test_the_quick_read_is_used_for_camera_style_files(session, tmp_path, monkeypatch):
+    import app.divein.footage as footage
+    _, folder = session
+    calls = []
+    real = footage.read_sound
+    monkeypatch.setattr(footage, "read_sound", lambda *a: calls.append(a) or real(*a))
+    camera_audio(str(folder / "DJI_0002.MP4"), str(tmp_path / "cache"))
+    assert calls

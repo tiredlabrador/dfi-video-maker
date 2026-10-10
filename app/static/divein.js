@@ -1215,7 +1215,7 @@ async function findFootage() {
       if (current) {
         // No percentage: reading a video's sound is one long step.
         status.textContent = `${s.message || 'Listening'}\u2026 `
-          + '(the first look at each video takes a minute or two)';
+          + '(the first look at each video takes a few seconds)';
       }
       return;
     }

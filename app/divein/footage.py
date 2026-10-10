@@ -24,6 +24,8 @@ import threading
 
 import numpy as np
 
+from app.divein.mp4audio import read_sound
+
 MATCH_SR = 4000
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v")
 
@@ -125,9 +127,16 @@ def camera_audio(video: str, cache_dir: str, probe: dict | None = None) -> np.nd
             handle, partial = tempfile.mkstemp(dir=cache_dir, suffix=".part")
             os.close(handle)
             try:
-                result = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", video,
-                                         "-map", "0:a:0", "-ac", "1", "-ar", str(MATCH_SR),
-                                         "-f", "f32le", partial], capture_output=True)
+                # Just the sound's bytes, read from the file's own index: seconds,
+                # where ffmpeg reading all 17GB takes a minute.
+                quick = read_sound(video, MATCH_SR)
+                if quick is not None:
+                    quick.tofile(partial)
+                    result = subprocess.CompletedProcess([], 0)
+                else:
+                    result = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", video,
+                                             "-map", "0:a:0", "-ac", "1", "-ar", str(MATCH_SR),
+                                             "-f", "f32le", partial], capture_output=True)
                 if result.returncode != 0:
                     print("ffmpeg could not read:",
                           result.stderr.decode(errors="replace")[-500:])
