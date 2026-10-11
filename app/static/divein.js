@@ -1159,6 +1159,24 @@ function wireFraming() {
   $('reset-framing').addEventListener('click', () => setFraming({ cx: 0.5, cy: 0.5, zoom: 1 }));
 }
 
+/** When there's nothing to show, say why, rather than looking broken. */
+function explainEmptyPreview() {
+  const box = $('stage-empty').querySelector('p');
+  if (state.photo) return;                         // the photo is shown instead
+  const n = state.selected + 1;
+  let text = 'Choose the mix and find its footage, or choose a photo, to start.';
+  if (state.starts.length && state.footage && state.audio
+      && state.footage.audio === state.audio.token && clipSource(state.selected) === 'photo') {
+    const covered = state.footage.matches
+      .map((m) => `${timecode(m.mix_from)}–${timecode(m.mix_to)}`).join(' and ');
+    text = clipFilmed(state.selected)
+      ? `Clip ${n} is set to use the photo: choose one, or switch the clip to Footage.`
+      : `Clip ${n} isn’t all filmed (the camera has ${covered}, the white strip under the mix). `
+        + 'Move it into the white strip, or choose a photo for it.';
+  }
+  box.textContent = text;
+}
+
 /** Whether all of clip `i` was filmed. */
 function clipFilmed(i) {
   const start = state.starts[i];
@@ -1198,6 +1216,7 @@ function showFootage(rough = false) {
   show($('framing-hint'), Boolean(at));
   if (at) { applyFraming(); applyLook(); } else clearInterval(grainTimer);
   updateGrade(at);
+  explainEmptyPreview();
   if (!at) { el.pause(); return; }
   $('player').pause();
   const src = `/api/divein/footage/video?audio=${encodeURIComponent(state.audio.token)}&video=${at.video}`;
