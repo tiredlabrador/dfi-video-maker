@@ -442,3 +442,60 @@ def test_the_look_keeps_the_sync(server, shoot, tmp_path):
     assert abs(flash - click) <= 1 / FPS
     assert job["sync"][0]["in_sync"]
     assert float(probe(clip)["format"]["duration"]) == pytest.approx(6, abs=0.1)
+
+
+# ── brightness ───────────────────────────────────────────────────────────
+def squaring_lut(path, size=33):
+    """A LUT that squares every value: so brightening before it differs from after."""
+    steps = np.linspace(0, 1, size)
+    lines = [f"LUT_3D_SIZE {size}"]
+    for b in steps:
+        for g in steps:
+            for r in steps:
+                lines.append(f"{r * r:.6f} {g * g:.6f} {b * b:.6f}")
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+@pytest.fixture(scope="module")
+def grey_flat(shoot, tmp_path_factory):
+    """D-Log-style (10-bit) footage of a plain 40% grey wall, with the session's sound."""
+    tmp = tmp_path_factory.mktemp("greyflat")
+    folder = tmp / "Camera"
+    folder.mkdir()
+    gv.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+            "-i", f"color=c=0x666666:s=320x180:r={FPS}:d=120", "-i", str(shoot / "cam.wav"),
+            "-c:v", "libx264", "-pix_fmt", "yuv420p10le", "-preset", "ultrafast",
+            "-c:a", "aac", "-ar", "48000", "-shortest", str(folder / "DJI_0001.MP4")], "grey")
+    (tmp / "mix.wav").write_bytes((shoot / "mix.wav").read_bytes())
+    return tmp
+
+
+def grey_level(server, token, tmp_path, **look):
+    _, job = call(server, "/api/divein/export",
+                  design(token, footage_look={**PLAIN, **look}))
+    job = finished(server, job["id"])
+    assert job["status"] == "done", job.get("error")
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(download(server, job, ".mp4"))
+    return middle_colour(clip).mean() / 255
+
+
+def test_brightness_lifts_the_footage(server, grey_flat, tmp_path):
+    server.divein.lut_path = str(tmp_path / "none.cube")              # no colour file
+    token = found(server, grey_flat)
+    plain = grey_level(server, token, tmp_path)
+    brighter = grey_level(server, token, tmp_path, brightness=50)
+    darker = grey_level(server, token, tmp_path, brightness=-50)
+    assert brighter == pytest.approx(plain * 1.5, abs=0.03)
+    assert darker == pytest.approx(plain * 0.5, abs=0.03)
+
+
+def test_on_log_footage_brightness_comes_before_the_colour_file(server, grey_flat, tmp_path):
+    """Graded the usual way: exposure set on the flat footage, then the LUT."""
+    server.divein.lut_path = str(squaring_lut(tmp_path / "square.cube"))
+    token = found(server, grey_flat)
+    x = 0x66 / 255
+    level = grey_level(server, token, tmp_path, brightness=50)
+    assert level == pytest.approx((1.5 * x) ** 2, abs=0.03)              # before: 0.36
+    assert abs(level - 1.5 * x * x) > 0.08                               # after would be 0.24

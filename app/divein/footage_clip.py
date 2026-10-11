@@ -155,7 +155,7 @@ def _quoted(path: str) -> str:
 def render(video: str, video_t: float, mix_path: str, mix_t: float, rate: float,
            seconds: float, out_path: str, cfg: dict, fps: float, lut: str | None = None,
            width: int | None = None, cx: float = 0.5, cy: float = 0.5, zoom: float = 1.0,
-           progress=None, look=None) -> str:
+           progress=None, look=None, gain: float = 1.0) -> str:
     """
     Cut `seconds` of footage from `video_t` (seconds after the picture starts)
     with the mix from `mix_t` under it. Alongside, saves the camera's own sound
@@ -183,6 +183,10 @@ def render(video: str, video_t: float, mix_path: str, mix_t: float, rate: float,
     cw, ch = f"(ih*{aspect}/{zoom:.4f})", f"(ih/{zoom:.4f})"
     shape = f"crop={cw}:{ch}:(iw-{cw})*{min(max(cx, 0), 1):.4f}:(ih-{ch})*{min(max(cy, 0), 1):.4f}"
     filters = [shape]
+    if abs(gain - 1.0) > 1e-3:
+        # Brightness, as a gain on the footage as filmed: before the colour
+        # file, which is where exposure is set on flat (log) footage.
+        filters.append(f"colorchannelmixer=rr={gain:.4f}:gg={gain:.4f}:bb={gain:.4f}")
     if lut:
         filters.append(f"lut3d=file={_quoted(lut)}")
     filters += [f"scale={w}:{h}:flags=lanczos", "format=yuv420p"]

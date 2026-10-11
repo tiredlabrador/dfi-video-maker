@@ -31,7 +31,8 @@ Step 3 is split into four parts, built in this order:
   contrast, grain, darkened edges, ghost (jumps on the hits, as on photo clips). Drawn per
   frame in Python with the photo clips' own maths (`app/divein/footage_look.py`); about
   1x real time to export. The live preview approximates it with CSS (no ghost).
-  Possible follow-up: the red-lit October room goes quite dark in black and white.
+  Brightness slider (-50 to +100, a gain): applied to the footage as filmed, before the
+  D-Log colour file, as a colourist would set exposure; the live preview does the same.
 - Then: overlays (tape, name, rings) on footage (Step 4).
 
 ## Step 1 results (Tom)

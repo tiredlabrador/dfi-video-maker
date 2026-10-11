@@ -93,7 +93,13 @@
       <label class="check"><input type="checkbox" id="look-vignette" checked> Darkened edges</label>
       <label class="check"><input type="checkbox" id="look-ghost" checked> Ghost</label>
     </div>
-    <p class="hint">The ghost (a soft echo that jumps on the hits) shows in Preview with sound.</p>
+    <div class="field inline">
+      <label for="look-brightness">Brightness</label>
+      <input type="range" id="look-brightness" min="-50" max="100" step="1" value="0">
+      <span class="hint" id="look-brightness-label">0</span>
+      <button type="button" class="link" id="reset-brightness">Reset</button>
+    </div>
+    <p class="hint">Brightness is set on the footage as filmed, before any D-Log correction. The ghost (a soft echo that jumps on the hits) shows in Preview with sound.</p>
     <p class="hint control-label">Tape, name and rings <span class="optional">photo clips, for now</span></p>
     <div class="segmented swatches" role="radiogroup" aria-label="Colour" id="colour-choice">
       <button type="button" role="radio" data-value="yellow" aria-checked="true"><i style="background:#fffe01"></i>Yellow</button>

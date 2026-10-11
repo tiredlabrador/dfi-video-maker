@@ -148,7 +148,8 @@ function restore() {
   $('overrides').value = saved.overrides ?? '{}';
   $('footage-folder').value = saved.footage_folder ?? '';
   for (const [k, on] of Object.entries(saved.footage_look || {})) {
-    if ($(`look-${k}`)) $(`look-${k}`).checked = Boolean(on);
+    if (k === 'brightness') $('look-brightness').value = String(Number(on) || 0);
+    else if ($(`look-${k}`)) $(`look-${k}`).checked = Boolean(on);
   }
   state.colour = saved.colour || 'yellow';
   state.motion = saved.rings_follow || 'level';
@@ -1042,7 +1043,13 @@ const MAX_FOOTAGE_ZOOM = 2;
 const LOOK = ['bw', 'contrast', 'grain', 'vignette', 'ghost'];
 
 function footageLook() {
-  return Object.fromEntries(LOOK.map((k) => [k, $(`look-${k}`).checked]));
+  return { ...Object.fromEntries(LOOK.map((k) => [k, $(`look-${k}`).checked])),
+           brightness: Number($('look-brightness').value) || 0 };
+}
+
+/** The brightness slider as a gain: +50 is 1.5x, as the export applies it. */
+function brightnessGain() {
+  return 1 + (Number($('look-brightness').value) || 0) / 100;
 }
 
 /** A grey noise tile for the live grain (the export draws its own, exactly). */
@@ -1070,8 +1077,13 @@ function applyLook() {
   const look = footageLook();
   const filter = [look.bw ? 'grayscale(1)' : '', look.contrast ? 'contrast(1.35) brightness(0.9)' : '']
     .filter(Boolean).join(' ');
-  $('footage').style.filter = filter;
+  // Brightness goes first, on the footage as filmed. On the colour-corrected
+  // view it's applied inside the correction, before DJI's colour file.
+  const gain = brightnessGain();
+  $('footage').style.filter = [gain !== 1 ? `brightness(${gain})` : '', filter].filter(Boolean).join(' ');
   $('graded').style.filter = filter;
+  $('look-brightness-label').textContent = `${look.brightness > 0 ? '+' : ''}${look.brightness}`;
+  grade.drawn = '';
   show($('footage-vignette'), look.vignette);
   const grain = $('footage-grain');
   show(grain, look.grain);
@@ -1306,8 +1318,9 @@ async function loadGrade() {
       precision highp float; precision highp sampler3D;
       in vec2 uv; out vec4 colour;
       uniform sampler2D picture; uniform sampler3D lut; uniform vec4 crop; uniform float size;
+      uniform float gain;
       void main() {
-        vec3 c = texture(picture, crop.xy + uv * crop.zw).rgb;
+        vec3 c = clamp(texture(picture, crop.xy + uv * crop.zw).rgb * gain, 0.0, 1.0);
         colour = vec4(texture(lut, c * ((size - 1.0) / size) + 0.5 / size).rgb, 1.0);
       }`));
     gl.linkProgram(program);
@@ -1339,6 +1352,7 @@ async function loadGrade() {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.uniform1i(gl.getUniformLocation(program, 'picture'), 0);
     grade.crop = gl.getUniformLocation(program, 'crop');
+    grade.gain = gl.getUniformLocation(program, 'gain');
     grade.gl = gl;
     grade.ready = true;
   } catch (error) {
@@ -1365,6 +1379,7 @@ function drawGraded() {
   const vh = (picture > frame ? 1 : picture / frame) / f.zoom;
   // The picture is uploaded upside down (FLIP_Y), so "top" is the far end.
   gl.uniform4f(grade.crop, (1 - uw) * f.cx, (1 - vh) * (1 - f.cy), uw, vh);
+  gl.uniform1f(grade.gain, brightnessGain());       // before the colour file, as exported
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   checkGradeWorks(gl, w, h);
 }
@@ -1400,7 +1415,7 @@ function gradeLoop(loop) {
   if (grade.loop !== loop) return;                   // a newer loop has taken over
   const el = $('footage'), canvas = $('graded');
   const key = `${el.currentTime}|${canvas.clientWidth}|${canvas.clientHeight}|${el.readyState}`
-    + `|${JSON.stringify(framingOf(state.selected))}`;
+    + `|${JSON.stringify(framingOf(state.selected))}|${brightnessGain()}`;
   if (key !== grade.drawn) { drawGraded(); grade.drawn = key; }
   requestAnimationFrame(() => gradeLoop(loop));
 }
@@ -1601,6 +1616,10 @@ document.addEventListener('DOMContentLoaded', () => {
   $('footage-btn').addEventListener('click', findFootage);
   $('lut-on').addEventListener('change', () => showFootage());
   for (const k of LOOK) $(`look-${k}`).addEventListener('change', () => { save(); applyLook(); });
+  $('look-brightness').addEventListener('input', () => { save(); applyLook(); });
+  $('reset-brightness').addEventListener('click', () => {
+    $('look-brightness').value = '0'; save(); applyLook();
+  });
   $('footage-folder').addEventListener('keydown', (e) => { if (e.key === 'Enter') findFootage(); });
   $('preview-btn').addEventListener('click', () => startJob('preview'));
   $('export-btn').addEventListener('click', () => startJob('export'));

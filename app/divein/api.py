@@ -608,6 +608,17 @@ class DiveInService:
         chosen = chosen if isinstance(chosen, dict) else {}
         return {k: bool(chosen.get(k, True)) for k in LOOK_OPTIONS}
 
+    @staticmethod
+    def _brightness(d: dict) -> float:
+        """The footage brightness slider (-100 to +100) as a gain: +50 is 1.5x."""
+        chosen = d.get("footage_look")
+        try:
+            value = float((chosen or {}).get("brightness", 0)) if isinstance(chosen, dict) else 0.0
+        except (TypeError, ValueError):
+            value = 0.0
+        value = value if math.isfinite(value) else 0.0
+        return 1.0 + min(max(value, -100.0), 100.0) / 100.0
+
     def _look_maker(self, d, cfg, mix, start, seconds, fps):
         """Makes the look for a clip's frames, or None if every part is off."""
         options = self._footage_look(d)
@@ -633,7 +644,8 @@ class DiveInService:
         camera_sound = footage_clip.render(video, video_t, mix, start, match.get("rate", 1.0),
                                            seconds, out, cfg, fps, lut=lut, width=width,
                                            progress=progress, **(crop or {}),
-                                           look=self._look_maker(d, cfg, mix, start, seconds, fps))
+                                           look=self._look_maker(d, cfg, mix, start, seconds, fps),
+                                           gain=self._brightness(d))
         try:
             off_by = footage_clip.measure(out, camera_sound, seconds)
         finally:
