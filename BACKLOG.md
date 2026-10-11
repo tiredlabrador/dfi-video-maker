@@ -7,9 +7,11 @@ files — no Google Sheet, Drive or logins involved. The Colab notebook still
 works as a fallback for The Dig but is no longer developed
 (`docs/COLAB_GUIDE.md`). Nothing below is blocked on anyone.
 
-**Done:** The Dig (one track or a batch, ~5s a video), self-updating installs,
-and Dive In (photo + tape + rings that follow the music, a 4:5 video per clip
-and a 1:1 JPG, clips picked on a timeline of the mix, ~7s a clip).
+**Done:** The Dig (one track list, waveform clip picking, ~5s a video, three at
+once), self-updating installs, and Dive In (an editor: the mix, camera footage
+synced by sound or the DJ's photo, a timeline with a playhead, the Dive In look
+on footage, a 4:5 video per clip and a 1:1 JPG). Both pages redesigned in Oct
+2026: see `docs/UI_REDESIGN.md`.
 
 ## Open, in the order worth doing
 
@@ -17,10 +19,13 @@ and a 1:1 JPG, clips picked on a timeline of the mix, ~7s a clip).
    source has, so a quiet track sounds quiet next to a loud one. ffmpeg's
    `loudnorm` fixes it; wants an on/off switch and a check it doesn't squash
    already-loud masters.
-2. **The Dig remembers settings between runs**, as Dive In already does.
-3. **Save straight to a folder** instead of downloading a zip — once the
+2. **The Dig remembers its track list between visits**, as Dive In now does
+   (needs the server to hand back a track's audio for its waveform).
+3. **Dive In: tape, name and rings on footage clips** (Step 4 of
+   `docs/VIDEO_PLAN.md`).
+4. **Save straight to a folder** instead of downloading a zip — once the
    unzipping step has proved annoying in real use.
-4. **Spotify playlists from the app — parked** until DFI starts paying. The
+5. **Spotify playlists from the app — parked** until DFI starts paying. The
    links live in the sheet; the simplest route is dropping the sheet's exported
    CSV into the app (no Google login, and the matching code already exists).
    Spotify's own login needs no secret, so the one in Colab can be retired.
