@@ -5,11 +5,13 @@
 'use strict';
 
 const SESSION = 'divein-session-v1';
+let chosenThisVisit = false;              // a choice you've made beats the last session
 
 /* ── the mix ─────────────────────────────────────────────────────── */
 
 async function useAudio(file) {
   if (!file) return;
+  chosenThisVisit = true;
   $('audio-label').textContent = file.name;
   $('audio-hint').textContent = 'Copying…';
   let info;
@@ -132,6 +134,7 @@ function footageSummary(found) {
 
 async function usePhoto(file) {
   if (!file) return;
+  chosenThisVisit = true;
   if (file.type && !file.type.startsWith('image/')) { setError('That isn’t a photo.'); return; }
   const name = file.name || 'Pasted photo';
   $('photo-label').textContent = 'Reading…';
@@ -227,7 +230,7 @@ async function restoreSession() {
   // Ask for the mix's outline: if the app still has the file, it answers.
   const check = await fetch(`/api/divein/overview?audio=${encodeURIComponent(saved.audio.token)}`)
     .catch(() => null);
-  if (!check || !check.ok) return;
+  if (!check || !check.ok || chosenThisVisit) return;
   state.starts = (saved.starts || []).filter((s) => Number.isFinite(s));
   state.sources = saved.sources || [];
   state.framing = saved.framing || [];
@@ -236,10 +239,11 @@ async function restoreSession() {
   if (saved.view) state.view = { ...state.view, ...saved.view };
   if (saved.crop) state.crop = saved.crop;
   await mixChosen(saved.audio, false);
-  if (saved.photo && saved.photo.token) {
+  if (saved.photo && saved.photo.token && !state.photo) {
     const url = `/api/divein/photo?token=${encodeURIComponent(saved.photo.token)}`;
     const photo = await fetch(url).catch(() => null);
-    if (photo && photo.ok) await photoChosen(saved.photo, url);
+    if (chosenThisVisit && state.photo) { /* you chose another meanwhile */ }
+    else if (photo && photo.ok) await photoChosen(saved.photo, url);
     else notify('The photo from last time is gone: choose it again.', 'warn');
   }
   notify('Picked up where you left off.', 'ok');
