@@ -32,7 +32,7 @@ body.is-over .track-list { outline: 2px dashed var(--accent); outline-offset: 4p
 .track > .art { grid-row: 1 / span 2; }
 .track > .clip-row, .track > .side { grid-column: 4 / -1; }
 .track > .art { align-self: start; }
-.track.is-selected { border-color: var(--line-2); box-shadow: inset 3px 0 0 var(--accent); }
+.track.is-selected { border-color: rgba(255, 225, 77, .55); background: var(--panel-2); }
 .track.has-problem { border-color: rgba(255,107,94,.55); }
 .track.sortable-ghost { opacity: .35; }
 .grip { color: var(--faint); cursor: grab; padding-top: .55rem; }
