@@ -564,3 +564,27 @@ def test_start_times_are_kept_exact_not_rounded_to_the_second(server, media):
     from app.divein.api import DiveInService
     svc = server.divein
     assert svc._starts({"starts": [10.6, "0:20.25"], "audio": a}) == [10.6, 20.25]
+
+
+# ── listening to one clip ───────────────────────────────────────────────
+def test_a_clips_sound_is_cut_on_the_server_for_listening(server, two_part_mix):
+    """Browsers jump around big MP3s slowly and only roughly: the page plays an exact cut."""
+    token = raw_upload(server, "audio", "mix.wav", two_part_mix)["token"]
+    response = get(server, f"/api/divein/excerpt?audio={token}&start=8&seconds=4")
+    assert response.headers["Content-Type"] == "audio/wav"
+    import wave
+    with wave.open(io.BytesIO(response.read())) as w:
+        frames = np.frombuffer(w.readframes(w.getnframes()), np.int16).reshape(-1, 2)
+        assert w.getframerate() == 44100 and w.getnframes() == 4 * 44100
+    level = np.abs(frames[:, 0].astype(float))
+    # 8-10s is the quiet part, 10-12s the loud one: the cut starts exactly at 8s.
+    assert level[2 * 44100 + 2000:].mean() > 5 * level[:2 * 44100 - 2000].mean()
+
+
+@pytest.mark.parametrize("query", ["start=-1&seconds=4", "start=x&seconds=4",
+                                   "start=1&seconds=0", "start=1&seconds=500"])
+def test_a_strange_excerpt_request_gets_a_plain_answer(server, two_part_mix, query):
+    token = raw_upload(server, "audio", "mix.wav", two_part_mix)["token"]
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        get(server, f"/api/divein/excerpt?audio={token}&{query}")
+    assert caught.value.code == 400

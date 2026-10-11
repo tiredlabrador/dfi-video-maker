@@ -30,7 +30,7 @@ from app.divein.audio import analyse, decode_excerpt
 from app.divein.compose import Scene, font_path, load_photo, missing_glyphs
 from app.divein.config import DEFAULTS, ConfigError, merge_config
 from app.divein.footage import FootageError, find_mix, list_videos, tidy_cache
-from app.divein.render import render_still, render_video
+from app.divein.render import render_still, render_video, write_wav
 from app.divein import footage_clip, transitions
 
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024 * 1024        # 3GB: any mix, any format
@@ -133,6 +133,8 @@ class DiveInService:
                 query = parse_qs(urlparse(h.path).query)
                 return h._json(200, self._overview(query.get("audio", [""])[0],
                                                    query.get("per_second", [None])[0]))
+            if method == "GET" and path == "/api/divein/excerpt":
+                return self._excerpt(h)
             if method == "GET" and path == "/api/divein/lut":
                 if not os.path.isfile(self.lut_path):
                     return h._error(404, "DJI's D-Log M colour file isn't installed: put it in "
@@ -493,6 +495,43 @@ class DiveInService:
             return {"duration": duration, "peaks": [round(float(v), 3) for v in peaks]}
         return self._overviews.get_or((path, points), make)
 
+    def _excerpt(self, h):
+        """
+        One clip's stretch of the mix, as a WAV, for the page's Listen button.
+
+        Cut here rather than by the browser jumping into the whole file:
+        Safari can take ages to seek deep into a two-hour MP3, and browsers
+        only find MP3 positions roughly, which would put footage out of step.
+        Sent as a file because Safari won't play sound from a server that
+        can't hand it pieces (ranges).
+        """
+        query = parse_qs(urlparse(h.path).query)
+        token = query.get("audio", [""])[0]
+        path = self._resolve(token, "audio file")
+        start = self._number(query.get("start", [""])[0] or "x", "The start")
+        seconds = self._number(query.get("seconds", [""])[0] or "x", "The length")
+        if start < 0 or start >= self._audio_length(token):
+            raise BadRequest("That start is outside the mix.")
+        if not 0.5 <= seconds <= 120:
+            raise BadRequest("A clip is 0.5 to 120 seconds long.")
+        folder = os.path.join(self.root, "excerpts")
+        os.makedirs(folder, exist_ok=True)
+        name = hashlib.sha1(f"{path}|{start:.3f}|{seconds:.3f}".encode()).hexdigest()[:20] + ".wav"
+        out = os.path.join(folder, name)
+        if not os.path.exists(out):
+            try:
+                samples = decode_excerpt(path, start, seconds, 44100)
+            except ValueError as exc:
+                raise BadRequest(str(exc))
+            partial = out + ".part"
+            write_wav(samples, 44100, partial)
+            os.replace(partial, out)
+            kept = sorted((os.path.getmtime(os.path.join(folder, n)), n)
+                          for n in os.listdir(folder) if n.endswith(".wav"))
+            for _, old in kept[:-30]:                    # the last 30 cuts are plenty
+                os.remove(os.path.join(folder, old))
+        return h._send_file(out, "audio/wav", "clip.wav")
+
     def _find_transitions(self, token) -> dict:
         """Roughly where the mix moves from one record to the next (a few seconds' work)."""
         path = self._resolve(token, "audio file")
@@ -546,8 +585,23 @@ class DiveInService:
         raise BadRequest(f"Clip {i + 1} ({self._clock(start)}) wasn't all filmed. The footage "
                          f"covers {covered}. Move it, or switch it to the photo.")
 
+    def _footage_crop(self, d: dict, i: int) -> dict:
+        """Clip i's framing of the footage: position (0-1 each way) and zoom (1-2)."""
+        crops = d.get("footage_crops")
+        crop = crops[i] if isinstance(crops, list) and i < len(crops) \
+            and isinstance(crops[i], dict) else {}
+
+        def number(key, default, low, high):
+            try:
+                value = float(crop.get(key, default))
+            except (TypeError, ValueError):
+                value = default
+            return min(max(value if math.isfinite(value) else default, low), high)
+        return {"cx": number("cx", 0.5, 0, 1), "cy": number("cy", 0.5, 0, 1),
+                "zoom": number("zoom", 1.0, 1, footage_clip.MAX_ZOOM)}
+
     def _footage_clip(self, d, cfg, match, video, start, seconds, out, width=None,
-                      progress=None) -> dict:
+                      progress=None, crop=None) -> dict:
         """Cut one footage clip, then measure its sync. Returns that measurement."""
         mix = self._resolve(d.get("audio"), "audio file")
         lut = self.lut_path if match.get("log") and d.get("lut", True) \
@@ -557,7 +611,7 @@ class DiveInService:
         fps = footage_clip.frame_rate(video)
         camera_sound = footage_clip.render(video, video_t, mix, start, match.get("rate", 1.0),
                                            seconds, out, cfg, fps, lut=lut, width=width,
-                                           progress=progress)
+                                           progress=progress, **(crop or {}))
         try:
             off_by = footage_clip.measure(out, camera_sound, seconds)
         finally:
@@ -605,7 +659,8 @@ class DiveInService:
                 match, video = footage[pick]
                 sync.append(self._footage_clip(d, cfg, match, video, starts[pick], seconds, out,
                                                width=cfg["export"]["preview_width"],
-                                               progress=progress))
+                                               progress=progress,
+                                               crop=self._footage_crop(d, pick)))
                 files.append(out)
                 return files
             if preview:
@@ -629,7 +684,7 @@ class DiveInService:
                     out = os.path.join(folder, self._filename(d, suffix))
                     match, video = footage[i]
                     measured = self._footage_clip(
-                        d, cfg, match, video, start, seconds, out,
+                        d, cfg, match, video, start, seconds, out, crop=self._footage_crop(d, i),
                         progress=lambda f, m="", i=i: progress((i + f) / steps,
                             f"Clip {i + 1} of {len(starts)}: {m}"))
                     sync.append({"clip": i + 1, **measured})

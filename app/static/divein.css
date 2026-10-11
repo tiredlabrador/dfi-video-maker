@@ -14,6 +14,10 @@ a.tab { text-decoration: none; display: inline-block; }
   box-shadow: 0 0 0 3px rgba(255,225,77,.14);
 }
 
+h2 .optional { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }
+.section-hint { margin: -.35rem 0 .7rem; }
+.footage-frame { cursor: grab; touch-action: none; }
+.footage-frame.is-dragging { cursor: grabbing; }
 .footage-find { display: flex; gap: .5rem; }
 .footage-find input { flex: 1; min-width: 0; }
 .footage-find .btn { white-space: nowrap; }

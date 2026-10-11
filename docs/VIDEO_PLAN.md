@@ -23,15 +23,13 @@ Step 3 is split into four parts, built in this order:
 4. **Suggested moments**, e.g. big drops in the filmed part of the mix.
 
 ## Pick up here next time (Dom's notes, 10 Oct 2026)
-- **Rethink the Dive In layout:** the mix should come first (it drives everything now),
-  then footage, clips, photo/details, style. Free to rejig where things live and how
-  they look now that footage exists.
-- **"Video preview isn't working"** (Dom, in Safari). Not yet diagnosed: first ask which
-  part (the footage in the preview box, Listen, or "Preview with sound") and on which
-  footage. Likely suspect: Safari not letting WebGL read HEVC frames, which blanks the
-  D-Log colour-corrected preview. A fallback now shows the plain footage if the corrected
-  picture comes out blank. Check in real Safari.
-- Then: move the crop per clip (Step 3 part 3), overlays on footage (Step 4).
+- Done 11 Oct: layout now runs mix → footage → clips → photo & details → style → make it;
+  per-clip framing (drag the footage, scroll or slider to zoom up to 2x); Listen now plays
+  a server-cut WAV of the clip (Safari couldn't seek deep into a 2-hour MP3: no sound, and
+  the footage looped half a second chasing the stuck position).
+- **Next: the picture look for footage (Dom's call: before the graphics).** Options to
+  decide: black-and-white Dive In style vs colour, grain, contrast, etc.
+- Then: overlays (tape, name, rings) on footage (Step 4).
 
 ## Step 1 results (Tom)
 - Footage is in `Edits/10.02 - Pirate October/` on the SSD: two 1080p, 25fps files,

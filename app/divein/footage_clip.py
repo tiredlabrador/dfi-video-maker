@@ -26,6 +26,7 @@ SEARCH = 0.25             # seconds either side of where the clip should be: und
 LISTEN = 15.0             # seconds of the clip used to fine-tune and to measure
 APART = 0.1               # a rival line-up at least this far from the best...
 CLEAR = 1.2               # ...must be this much weaker for the best to count
+MAX_ZOOM = 2.0            # further in, 1080p footage looks soft on a phone
 MIN_LIKENESS = 0.15       # and the best must be at least this alike (0 to 1)
 
 
@@ -152,7 +153,8 @@ def _quoted(path: str) -> str:
 
 def render(video: str, video_t: float, mix_path: str, mix_t: float, rate: float,
            seconds: float, out_path: str, cfg: dict, fps: float, lut: str | None = None,
-           width: int | None = None, cx: float = 0.5, progress=None) -> str:
+           width: int | None = None, cx: float = 0.5, cy: float = 0.5, zoom: float = 1.0,
+           progress=None) -> str:
     """
     Cut `seconds` of footage from `video_t` (seconds after the picture starts)
     with the mix from `mix_t` under it. Alongside, saves the camera's own sound
@@ -170,8 +172,12 @@ def render(video: str, video_t: float, mix_path: str, mix_t: float, rate: float,
     w, h = cfg["canvas"]["width"], cfg["canvas"]["height"]
     if width is not None:
         w, h = int(width), int(round(int(width) * h / w / 2)) * 2
-    shape = f"crop=ih*{cfg['canvas']['width']}/{cfg['canvas']['height']}:ih:" \
-            f"(iw-ih*{cfg['canvas']['width']}/{cfg['canvas']['height']})*{min(max(cx, 0), 1)}:0"
+    # The tallest 4:5 window the picture allows, made smaller by `zoom`, placed
+    # by cx/cy: 0 = hard left/top, 1 = hard right/bottom of the room to move.
+    aspect = f"{cfg['canvas']['width']}/{cfg['canvas']['height']}"
+    zoom = min(max(zoom, 1.0), MAX_ZOOM)
+    cw, ch = f"(ih*{aspect}/{zoom:.4f})", f"(ih/{zoom:.4f})"
+    shape = f"crop={cw}:{ch}:(iw-{cw})*{min(max(cx, 0), 1):.4f}:(ih-{ch})*{min(max(cy, 0), 1):.4f}"
     filters = [shape]
     if lut:
         filters.append(f"lut3d=file={_quoted(lut)}")

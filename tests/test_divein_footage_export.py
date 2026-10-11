@@ -354,3 +354,57 @@ def test_the_preview_shows_the_clip_picked_even_when_two_start_together(server, 
     job = finished(server, job["id"])
     assert job["status"] == "done", job.get("error")
     assert job["sync"], "the footage clip should have been previewed, not the photo one"
+
+
+# ── framing ──────────────────────────────────────────────────────────────
+@pytest.fixture(scope="module")
+def stripes(shoot, tmp_path_factory):
+    """The same camera, but its picture is white on the left third, grey middle, black right."""
+    tmp = tmp_path_factory.mktemp("stripes")
+    folder = tmp / "Camera"
+    folder.mkdir()
+    picture = (f"color=c=black:s=1280x720:r={FPS}:d=120,"
+               "drawbox=x=0:y=0:w=427:h=720:c=white:t=fill,"
+               "drawbox=x=427:y=0:w=426:h=360:c=gray:t=fill,"
+               "drawbox=x=427:y=360:w=426:h=360:c=0x202020:t=fill")
+    gv.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", picture,
+            "-i", str(shoot / "cam.wav"), "-c:v", "libx264", "-preset", "ultrafast", "-g", "50",
+            "-c:a", "aac", "-ar", "48000", "-shortest", str(folder / "DJI_0001.MP4")], "stripes")
+    (tmp / "mix.wav").write_bytes((shoot / "mix.wav").read_bytes())
+    return tmp
+
+
+def brightness(server, job, tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(download(server, job, ".mp4"))
+    return middle_colour(clip).mean()
+
+
+@pytest.mark.parametrize("cx, light", [(0.0, True), (1.0, False)])
+def test_footage_can_be_framed_further_left_or_right(server, stripes, tmp_path, cx, light):
+    token = found(server, stripes)
+    _, job = call(server, "/api/divein/export",
+                  design(token, footage_crops=[{"cx": cx, "cy": 0.5, "zoom": 1}]))
+    job = finished(server, job["id"])
+    assert job["status"] == "done", job.get("error")
+    level = brightness(server, job, tmp_path)
+    assert (level > 200) if light else (level < 60)
+
+
+@pytest.mark.parametrize("cy, level", [(0.0, (110, 150)), (1.0, (20, 50))])
+def test_zoomed_in_footage_can_be_framed_higher_or_lower(server, stripes, tmp_path, cy, level):
+    """Zoomed in 2x on the middle third: its top half is grey, its bottom half nearly black."""
+    token = found(server, stripes)
+    _, job = call(server, "/api/divein/export",
+                  design(token, footage_crops=[{"cx": 0.5, "cy": cy, "zoom": 2}]))
+    job = finished(server, job["id"])
+    low, high = level
+    assert low < brightness(server, job, tmp_path) < high
+
+
+def test_a_strange_framing_is_kept_within_bounds_not_refused(server, stripes, tmp_path):
+    token = found(server, stripes)
+    _, job = call(server, "/api/divein/export",
+                  design(token, footage_crops=[{"cx": -3, "cy": "x", "zoom": 50}]))
+    job = finished(server, job["id"])
+    assert job["status"] == "done", job.get("error")

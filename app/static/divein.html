@@ -22,31 +22,7 @@
 
 <main>
   <section class="panel">
-    <h2>1 &nbsp;Photo</h2>
-    <label class="drop" id="photo-drop" for="photo-input">
-      <input type="file" id="photo-input" accept="image/*" hidden>
-      <span class="drop-icon" aria-hidden="true">◐</span>
-      <span class="drop-text" id="photo-label">Drop a photo here, or click to choose</span>
-      <span class="drop-hint">Or paste one, or drop it on the preview. Drag the preview to move it; scroll or pinch to zoom.</span>
-    </label>
-    <div class="field inline" id="zoom-row" hidden>
-      <label for="zoom">Zoom</label>
-      <input type="range" id="zoom" min="1" max="3" step="0.01" value="1">
-      <button type="button" class="link" id="reset-crop">Reset</button>
-    </div>
-
-    <h2>2 &nbsp;Details</h2>
-    <div class="field">
-      <label for="artist">Artist name</label>
-      <textarea id="artist" rows="2" placeholder="Artist&#10;Name" autocomplete="off"></textarea>
-      <p class="hint">Up to two lines. Press return for your own line break.</p>
-    </div>
-    <div class="field">
-      <label for="episode">Episode</label>
-      <input type="text" id="episode" value="02.01" autocomplete="off">
-    </div>
-
-    <h2>3 &nbsp;The mix</h2>
+    <h2>1 &nbsp;The mix</h2>
     <label class="drop" id="audio-drop" for="audio-input">
       <input type="file" id="audio-input" accept="audio/*,.mp3,.wav,.flac,.m4a,.aiff" hidden>
       <span class="drop-icon" aria-hidden="true">♫</span>
@@ -54,11 +30,9 @@
       <span class="drop-hint" id="audio-hint">Any length</span>
     </label>
 
-    <p class="hint" id="clips-hint" hidden>Add clips on the timeline along the bottom of the window.</p>
-    <ul class="clips" id="clips"></ul>
-
-    <div class="field" id="footage-row" hidden>
-      <label for="footage-folder">Camera footage (optional)</label>
+    <h2>2 &nbsp;Camera footage <span class="optional">optional</span></h2>
+    <div class="field" id="footage-row">
+      <label for="footage-folder">The folder with the camera’s videos</label>
       <div class="footage-find">
         <input type="text" id="footage-folder" placeholder="/Volumes/…/10.02 - Pirate October"
                autocomplete="off" spellcheck="false">
@@ -66,10 +40,13 @@
       </div>
       <label class="check" id="lut-row" hidden><input type="checkbox" id="lut-on" checked>
         Correct D-Log colours (DJI’s colour file)</label>
-      <p class="hint" id="footage-status">The folder with the camera's videos. In Finder, right-click it, hold Option, and choose Copy as Pathname.</p>
+      <p class="hint" id="footage-status">In Finder, right-click the folder, hold Option, and choose Copy as Pathname.</p>
     </div>
-    <audio id="listen" preload="auto" hidden></audio>
 
+    <h2>3 &nbsp;Clips</h2>
+    <p class="hint" id="clips-hint">Choose the mix, then click on the timeline along the bottom of the window to add clips.</p>
+    <ul class="clips" id="clips"></ul>
+    <audio id="listen" preload="auto" hidden></audio>
     <details class="advanced type-times">
       <summary>Type the times instead</summary>
       <div class="field">
@@ -83,7 +60,32 @@
       <span class="hint">seconds</span>
     </div>
 
-    <h2>4 &nbsp;Style</h2>
+    <h2>4 &nbsp;Photo &amp; details</h2>
+    <p class="hint section-hint">The photo is for photo clips and the 1:1 JPG: not needed if every clip uses footage.</p>
+    <label class="drop" id="photo-drop" for="photo-input">
+      <input type="file" id="photo-input" accept="image/*" hidden>
+      <span class="drop-icon" aria-hidden="true">◐</span>
+      <span class="drop-text" id="photo-label">Drop a photo here, or click to choose</span>
+      <span class="drop-hint">Or paste one, or drop it on the preview. Drag the preview to move it; scroll or pinch to zoom.</span>
+    </label>
+    <div class="field inline" id="zoom-row" hidden>
+      <label for="zoom">Zoom</label>
+      <input type="range" id="zoom" min="1" max="3" step="0.01" value="1">
+      <button type="button" class="link" id="reset-crop">Reset</button>
+    </div>
+
+    <div class="field">
+      <label for="artist">Artist name</label>
+      <textarea id="artist" rows="2" placeholder="Artist&#10;Name" autocomplete="off"></textarea>
+      <p class="hint">Up to two lines. Press return for your own line break.</p>
+    </div>
+    <div class="field">
+      <label for="episode">Episode</label>
+      <input type="text" id="episode" value="02.01" autocomplete="off">
+    </div>
+
+    <h2>5 &nbsp;Style</h2>
+    <p class="hint section-hint">Applies to photo clips for now.</p>
     <div class="segmented swatches" role="radiogroup" aria-label="Colour" id="colour-choice">
       <button type="button" role="radio" data-value="yellow" aria-checked="true"><i style="background:#fffe01"></i>Yellow</button>
       <button type="button" role="radio" data-value="red" aria-checked="false"><i style="background:#ea2020"></i>Red</button>
@@ -100,7 +102,7 @@
     </div>
     <label class="check"><input type="checkbox" id="twitch" checked> Ghost twitch on each hit</label>
 
-    <h2>5 &nbsp;Make it</h2>
+    <h2>6 &nbsp;Make it</h2>
     <div class="actions">
       <button type="button" class="btn btn--ghost" id="preview-btn">Preview with sound</button>
       <button type="button" class="btn" id="export-btn">Export</button>
@@ -133,7 +135,7 @@
     </div>
 
     <div class="stage stage--divein" id="stage">
-      <div class="stage-empty" id="stage-empty"><p>Choose a photo to start.</p></div>
+      <div class="stage-empty" id="stage-empty"><p>Choose the mix and find its footage, or choose a photo, to start.</p></div>
       <div class="frame" id="frame" hidden>
         <img id="still" alt="Live preview" draggable="false">
         <canvas id="draft" hidden></canvas>
@@ -145,6 +147,13 @@
       </div>
       <div class="busy" id="busy" hidden></div>
     </div>
+
+    <div class="field inline" id="framing-row" hidden>
+      <label for="footage-zoom">Framing</label>
+      <input type="range" id="footage-zoom" min="1" max="2" step="0.01" value="1">
+      <button type="button" class="link" id="reset-framing">Reset</button>
+    </div>
+    <p class="hint" id="framing-hint" hidden>Drag the footage to move it; scroll or use the slider to zoom. Each clip keeps its own framing.</p>
 
     <div class="field scrub" id="scrub-row" hidden>
       <label class="check"><input type="checkbox" id="scrub-on"> Show the rings at a moment in the selected clip</label>

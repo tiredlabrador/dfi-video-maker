@@ -26,6 +26,7 @@ const state = {
   // The mix timeline
   starts: [],             // clip start times, in seconds
   sources: [],            // for each clip: 'auto' (footage if filmed), 'photo' or 'video'
+  framing: [],            // for each clip: how its footage is framed {cx, cy, zoom}
   selected: 0,            // which clip the preview and "moment" use
   overview: null,         // {duration, peaks}
   detail: null,           // the same, finer, for the close-up
@@ -93,6 +94,7 @@ function design(extra = {}) {
     episode: $('episode').value,
     starts: state.starts,                       // exact seconds, not rounded
     sources: state.starts.map((_, i) => clipSource(i)),
+    footage_crops: state.starts.map((_, i) => framingOf(i)),
     lut: $('lut-on').checked,
     preview_index: state.selected,
     clip_seconds: clipLength(),
@@ -365,10 +367,11 @@ async function useAudio(file) {
   $('audio-hint').textContent = `${timecode(state.audio.duration)} long`;
   $('audio-drop').classList.add('is-set');
 
-  // Listening plays the file straight from your disk: nothing to wait for.
+  // Listening plays each clip's own stretch, cut by the app (see toggleListen).
   const player = $('listen');
+  player.pause();
   if (player.src.startsWith('blob:')) URL.revokeObjectURL(player.src);
-  player.src = URL.createObjectURL(file);
+  player.removeAttribute('src');
 
   state.overview = null;
   state.detail = null;
@@ -382,8 +385,9 @@ async function useAudio(file) {
   stopListening();
   state.starts = state.starts.filter((s) => s < state.audio.duration);
   state.sources = [];
+  state.framing = [];
   show($('timeline'), true);
-  show($('clips-hint'), true);
+  $('clips-hint').textContent = 'Click on the timeline along the bottom of the window to add clips.';
   $('timeline-hover').textContent = 'Drawing the mix…';
   startsChanged();
   const token = state.audio.token;
@@ -537,7 +541,7 @@ function drawStrip(canvas, t0, t1, peaks, perSecond, close) {
   const player = $('listen');                       // where playback is
   if (state.listening !== null && !player.paused) {
     ctx.fillStyle = '#fff';
-    ctx.fillRect(xOf(player.currentTime), 0, 2, h);
+    ctx.fillRect(xOf(listenTime()), 0, 2, h);
   }
   return { ctx, w, h, xOf };
 }
@@ -720,7 +724,7 @@ function startsFromText() {
   const times = parts.map(parseTime);
   if (times.some((t) => t === null)) return false;      // keep typing
   stopListening();
-  if (times.length !== state.starts.length) state.sources = [];
+  if (times.length !== state.starts.length) { state.sources = []; state.framing = []; }
   state.starts = times;
   if (state.selected >= times.length) state.selected = 0;
   renderClips();
@@ -760,6 +764,7 @@ function renderClips() {
       if (state.selected > i) state.selected -= 1;
       state.starts.splice(i, 1);
       state.sources.splice(i, 1);
+      state.framing.splice(i, 1);
       startsChanged();
     });
     const source = document.createElement('button');
@@ -789,11 +794,15 @@ function toggleListen(i) {
   const player = $('listen');
   state.listening = i;
   selectClip(i);
-  player.currentTime = state.starts[i];
+  // Just this clip's stretch, cut exactly by the app: browsers jump into a
+  // long MP3 slowly (Safari) and only roughly, which would put footage out of step.
+  state.listenFrom = state.starts[i];
+  player.src = `/api/divein/excerpt?audio=${encodeURIComponent(state.audio.token)}`
+    + `&start=${state.listenFrom}&seconds=${clipLength()}`;
   player.play().catch(() => stopListening());
   const tick = () => {
     if (state.listening !== i) return;
-    if (player.paused || player.currentTime >= state.starts[i] + clipLength()) { stopListening(); return; }
+    if (player.paused || player.ended) { stopListening(); return; }
     followListening();
     drawTimeline();
     requestAnimationFrame(tick);
@@ -804,6 +813,7 @@ function toggleListen(i) {
 
 function stopListening() {
   $('listen').pause();
+  $('footage').playbackRate = 1;
   state.listening = null;
   showFootage();                          // back to the clip's first frame
   renderClips();
@@ -1018,6 +1028,73 @@ function playVideo(url) {
 
 /* ── the camera footage in the preview ───────────────────────────── */
 
+/* ── framing the footage (per clip) ──────────────────────────────── */
+
+const MAX_FOOTAGE_ZOOM = 2;
+
+/** Clip i's framing: cx/cy 0..1 (left/top to right/bottom), zoom 1..2. */
+function framingOf(i) {
+  const f = state.framing[i];
+  return f ? { ...f } : { cx: 0.5, cy: 0.5, zoom: 1 };
+}
+
+/**
+ * Show the selected clip's framing on the plain video, exactly as the export
+ * crops it: object-position slides the 4:5 window along the picture, and a
+ * zoom scales about the same point, so the visible part is the same window.
+ */
+function applyFraming() {
+  const f = framingOf(state.selected);
+  const el = $('footage');
+  el.style.objectPosition = `${f.cx * 100}% 50%`;
+  el.style.transformOrigin = `${f.cx * 100}% ${f.cy * 100}%`;
+  el.style.transform = f.zoom > 1 ? `scale(${f.zoom})` : '';
+  $('footage-zoom').value = String(f.zoom);
+  grade.drawn = '';                        // the corrected picture redraws too
+}
+
+function setFraming(change) {
+  const i = state.selected;
+  const f = { ...framingOf(i), ...change };
+  f.cx = Math.min(1, Math.max(0, f.cx));
+  f.cy = Math.min(1, Math.max(0, f.cy));
+  f.zoom = Math.min(MAX_FOOTAGE_ZOOM, Math.max(1, f.zoom));
+  state.framing[i] = f;
+  applyFraming();
+}
+
+function wireFraming() {
+  const box = $('footage-frame');
+  let drag = null;
+  box.addEventListener('pointerdown', (e) => {
+    const el = $('footage');
+    if (!el.videoWidth) return;
+    drag = { x: e.clientX, y: e.clientY, start: framingOf(state.selected) };
+    box.setPointerCapture(e.pointerId);
+    box.classList.add('is-dragging');
+  });
+  box.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const el = $('footage'), w = box.clientWidth, h = box.clientHeight;
+    // How far the picture can travel each way at this zoom, in screen pixels.
+    const roomX = h * (el.videoWidth / el.videoHeight) * drag.start.zoom - w;
+    const roomY = h * drag.start.zoom - h;
+    setFraming({
+      cx: roomX > 0 ? drag.start.cx - (e.clientX - drag.x) / roomX : drag.start.cx,
+      cy: roomY > 0 ? drag.start.cy - (e.clientY - drag.y) / roomY : drag.start.cy,
+    });
+  });
+  const end = () => { drag = null; box.classList.remove('is-dragging'); };
+  box.addEventListener('pointerup', end);
+  box.addEventListener('pointercancel', end);
+  box.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    setFraming({ zoom: framingOf(state.selected).zoom * Math.exp(-e.deltaY * 0.002) });
+  }, { passive: false });
+  $('footage-zoom').addEventListener('input', () => setFraming({ zoom: Number($('footage-zoom').value) || 1 }));
+  $('reset-framing').addEventListener('click', () => setFraming({ cx: 0.5, cy: 0.5, zoom: 1 }));
+}
+
 /** Whether all of clip `i` was filmed. */
 function clipFilmed(i) {
   const start = state.starts[i];
@@ -1053,6 +1130,9 @@ function showFootage(rough = false) {
   const at = start === null || state.format !== 'portrait' || clipSource(state.selected) !== 'video'
     ? null : footageAt(start);
   $('stage').classList.toggle('is-footage', Boolean(at));
+  show($('framing-row'), Boolean(at));
+  show($('framing-hint'), Boolean(at));
+  if (at) applyFraming();
   updateGrade(at);
   if (!at) { el.pause(); return; }
   $('player').pause();
@@ -1070,19 +1150,33 @@ function showFootage(rough = false) {
  * under way, or the picture keeps restarting its jump and never plays.
  */
 let lastAlign = 0;
+
+/** Where in the mix the Listen button has got to. */
+function listenTime() {
+  return (state.listenFrom || 0) + $('listen').currentTime;
+}
+
 function followListening() {
   const el = $('footage');
   if (!$('stage').classList.contains('is-footage')) return;
-  const at = footageAt($('listen').currentTime);
+  const player = $('listen');
+  // The sound isn't actually moving yet (still loading): hold the picture
+  // still rather than keep re-lining it up with a stuck position.
+  if (player.readyState < 3 || player.seeking) { el.pause(); return; }
+  const at = footageAt(listenTime());
   if (!at) { el.pause(); return; }
   const now = performance.now();
   // A jump that's taken over two seconds has stalled (likely after the tab
   // sat in the background): ask again rather than wait for ever.
   const stalled = el.seeking && now - lastAlign > 2000;
-  if ((!el.seeking && Math.abs(el.currentTime - at.time) > 0.2 && now - lastAlign > 600) || stalled) {
-    el.currentTime = at.time;
+  const behind = at.time - el.currentTime;          // positive: the picture is late
+  if ((!el.seeking && Math.abs(behind) > 0.3 && now - lastAlign > 600) || stalled) {
+    el.currentTime = at.time;                       // well out: jump
     lastAlign = now;
   }
+  // Slightly out: play a touch faster or slower until level. Smoother than
+  // jumping, which in a big camera file takes a moment and stutters.
+  el.playbackRate = Math.abs(behind) < 0.02 ? 1 : 1 + Math.max(-0.1, Math.min(0.1, behind * 2));
   if (el.paused) el.play().catch(() => {});
 }
 
@@ -1212,9 +1306,13 @@ function drawGraded() {
   gl.bindTexture(gl.TEXTURE_2D, grade.video);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, el);
   // The same crop as the plain video's object-fit: cover.
+  // The same window as the plain video (and the export): framed, then zoomed.
+  const f = framingOf(state.selected);
   const frame = w / h, picture = el.videoWidth / el.videoHeight;
-  const uw = picture > frame ? frame / picture : 1, vh = picture > frame ? 1 : picture / frame;
-  gl.uniform4f(grade.crop, (1 - uw) / 2, (1 - vh) / 2, uw, vh);
+  const uw = (picture > frame ? frame / picture : 1) / f.zoom;
+  const vh = (picture > frame ? 1 : picture / frame) / f.zoom;
+  // The picture is uploaded upside down (FLIP_Y), so "top" is the far end.
+  gl.uniform4f(grade.crop, (1 - uw) * f.cx, (1 - vh) * (1 - f.cy), uw, vh);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   checkGradeWorks(gl, w, h);
 }
@@ -1249,7 +1347,8 @@ function checkGradeWorks(gl, w, h) {
 function gradeLoop(loop) {
   if (grade.loop !== loop) return;                   // a newer loop has taken over
   const el = $('footage'), canvas = $('graded');
-  const key = `${el.currentTime}|${canvas.clientWidth}|${canvas.clientHeight}|${el.readyState}`;
+  const key = `${el.currentTime}|${canvas.clientWidth}|${canvas.clientHeight}|${el.readyState}`
+    + `|${JSON.stringify(framingOf(state.selected))}`;
   if (key !== grade.drawn) { drawGraded(); grade.drawn = key; }
   requestAnimationFrame(() => gradeLoop(loop));
 }
@@ -1405,6 +1504,7 @@ document.addEventListener('DOMContentLoaded', () => {
   wireDrag();
   wireTimeline();
   wireFootageRecovery();
+  wireFraming();
   wireDrop($('photo-drop'), $('photo-input'), usePhoto);
   wireDrop($('stage'), null, usePhoto);                 // drop straight on the preview
   wireDrop($('audio-drop'), $('audio-input'), useAudio);
