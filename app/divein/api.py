@@ -36,6 +36,32 @@ from app.divein.footage_look import OPTIONS as LOOK_OPTIONS, FootageLook
 
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024 * 1024        # 3GB: any mix, any format
 CHUNK = 1024 * 1024
+UPLOADS_BYTES = 6 * 1024 ** 3                    # mixes and photos kept: a dozen or so mixes
+
+
+def tidy_uploads(folder: str, max_bytes: int = UPLOADS_BYTES) -> None:
+    """
+    Clear half-finished uploads, then drop the longest-unused files until the
+    folder is within `max_bytes`. Uploads are kept between runs so a reload
+    (or a restart of the app) can pick up where you left off.
+    """
+    if not os.path.isdir(folder):
+        return
+    kept = []
+    for name in os.listdir(folder):
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path):
+            continue
+        if name.endswith(".part"):
+            os.remove(path)
+        else:
+            kept.append((os.path.getmtime(path), os.path.getsize(path), path))
+    total = sum(size for _, size, _ in kept)
+    for _, size, path in sorted(kept):
+        if total <= max_bytes:
+            break
+        os.remove(path)
+        total -= size
 
 
 class BadRequest(ValueError):
@@ -93,12 +119,14 @@ def _scrub_paths(message: str) -> str:
 
 
 class DiveInService:
-    def __init__(self, work_dir: str, jobs, footage_cache: str | None = None):
+    def __init__(self, work_dir: str, jobs, footage_cache: str | None = None,
+                 uploads: str | None = None):
         self.root = os.path.join(work_dir, "divein")
-        self.uploads = os.path.join(self.root, "uploads")
+        self.uploads = uploads or os.path.join(self.root, "uploads")
         self.outputs = os.path.join(self.root, "output")
         os.makedirs(self.uploads, exist_ok=True)
         os.makedirs(self.outputs, exist_ok=True)
+        tidy_uploads(self.uploads)
         self.jobs = jobs
         self._photos = _LRU(4)
         self._scenes = _LRU(2)
@@ -134,6 +162,12 @@ class DiveInService:
                 query = parse_qs(urlparse(h.path).query)
                 return h._json(200, self._overview(query.get("audio", [""])[0],
                                                    query.get("per_second", [None])[0]))
+            if method == "GET" and path == "/api/divein/photo":
+                token = parse_qs(urlparse(h.path).query).get("token", [""])[0]
+                photo = self._resolve(token, "photo")
+                kinds = {".png": "image/png", ".webp": "image/webp", ".heic": "image/heic"}
+                kind = kinds.get(os.path.splitext(photo)[1].lower(), "image/jpeg")
+                return h._send_file(photo, kind, "photo")
             if method == "GET" and path == "/api/divein/excerpt":
                 return self._excerpt(h)
             if method == "GET" and path == "/api/divein/lut":
@@ -252,6 +286,10 @@ class DiveInService:
         path = os.path.realpath(os.path.join(root, token))
         if not path.startswith(root + os.sep) or not os.path.isfile(path):
             raise BadRequest(f"The {what} needs choosing again.")
+        try:
+            os.utime(path)                               # in use: kept longest when tidying
+        except OSError:
+            pass
         return path
 
     def _photo(self, token):
@@ -735,7 +773,7 @@ class DiveInService:
                              progress=lambda f, m="", i=i: progress((i + f) / steps,
                                  f"Clip {i + 1} of {len(starts)}: {m}"))
                 files.append(out)
-            if has_photo:                                # the 1:1 JPG is made from the photo
+            if has_photo and d.get("square", True):     # the 1:1 JPG is made from the photo
                 progress((steps - 1) / steps, "Making the square JPG")
                 square = self._scene(d, cfg, "square")
                 jpg = os.path.join(folder, self._filename(d, " - square.jpg"))

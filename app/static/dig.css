@@ -1,0 +1,107 @@
+/* The Dig: one list of tracks on the left, the selected one on the right. */
+
+body.dig { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+.dig-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 400px; }
+.tracks-pane { min-height: 0; overflow-y: auto; padding: .9rem 1rem 2rem; }
+.viewer-pane { min-height: 0; overflow-y: auto; border-left: 1px solid var(--line); background: var(--panel);
+               padding: 1rem; display: flex; flex-direction: column; gap: .9rem; }
+
+.tracks-head { display: flex; align-items: center; gap: .7rem; margin-bottom: .8rem; }
+.tracks-head h2 { margin: 0; font-size: .7rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.tracks-head .spacer { flex: 1; }
+
+.tracks-empty {
+  width: 100%; min-height: 260px; display: grid; place-content: center; justify-items: center; gap: .35rem;
+  font: inherit; color: var(--text); background: var(--panel); cursor: pointer;
+  border: 1.5px dashed var(--line-2); border-radius: 14px;
+}
+.tracks-empty svg { width: 30px; height: 30px; color: var(--accent); margin-bottom: .3rem; }
+.tracks-empty strong { font-size: 1.05rem; }
+.tracks-empty:hover, body.is-over .tracks-empty { border-color: var(--accent); }
+body.is-over .track-list { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: 12px; }
+
+/* ── A track ─────────────────────────────────────────────────────── */
+.track-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.track {
+  display: grid; grid-template-columns: 18px 26px 76px minmax(0, 1fr) auto; column-gap: .7rem; row-gap: .45rem;
+  align-items: center; padding: .7rem .75rem; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; cursor: default;
+}
+.track > .grip, .track > .num { grid-row: 1 / span 2; align-self: start; }
+.track > .art { grid-row: 1 / span 2; }
+.track > .clip-row, .track > .side { grid-column: 4 / -1; }
+.track > .art { align-self: start; }
+.track.is-selected { border-color: var(--line-2); box-shadow: inset 3px 0 0 var(--accent); }
+.track.has-problem { border-color: rgba(255,107,94,.55); }
+.track.sortable-ghost { opacity: .35; }
+.grip { color: var(--faint); cursor: grab; padding-top: .55rem; }
+.grip svg { width: 18px; height: 18px; }
+.num { padding-top: .5rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+.art { position: relative; width: 76px; height: 76px; padding: 0; border: none; border-radius: 8px; overflow: hidden;
+       background: var(--panel-3); cursor: pointer; display: grid; place-items: center; color: var(--muted); }
+.art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.art svg { width: 22px; height: 22px; }
+.art .swap { position: absolute; inset: 0; display: grid; place-items: center; font-size: .66rem; font-weight: 600;
+             color: #fff; background: rgba(0,0,0,.55); opacity: 0; transition: opacity .15s; }
+.art:hover .swap, .art:focus-visible .swap { opacity: 1; }
+.art .badge { position: absolute; left: 3px; bottom: 3px; font-size: .58rem; font-weight: 700; padding: 0 .25rem;
+              border-radius: 3px; background: var(--accent); color: #000; }
+
+.fields { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: .4rem; min-width: 0; }
+.fields .input { padding: .32rem .5rem; font-size: .86rem; }
+.fields .title { font-weight: 600; }
+.clip-row { display: flex; align-items: center; gap: .5rem; min-width: 0; }
+.listen { width: 28px; height: 28px; flex: none; }
+.listen svg { width: 13px; height: 13px; }
+.wave { flex: 1; min-width: 0; height: 40px; border-radius: 6px; background: var(--bg); overflow: hidden; cursor: pointer; }
+.clip-time { width: 4.2rem; flex: none; text-align: center; padding: .25rem .3rem; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.clip-note { margin: 0 auto 0 0; font-size: .74rem; color: var(--accent); }
+
+.side { display: flex; align-items: center; justify-content: flex-end; gap: .7rem; min-height: 26px; }
+.state { font-size: .76rem; color: var(--muted); white-space: nowrap; }
+.state.done { color: var(--ok); }
+.state.error { color: var(--danger); }
+.side .links { display: flex; gap: .6rem; }
+.side .links a, .side .links button { font: inherit; font-size: .78rem; color: var(--accent); background: none; border: none; cursor: pointer; text-decoration: none; padding: 0; }
+.side .remove { color: var(--muted); }
+.side .remove:hover { color: var(--text); background: var(--panel-3); }
+.side .remove svg { width: 14px; height: 14px; }
+.side .mini { height: 26px; padding: 0 .6rem; font-size: .76rem; }
+
+.batch-progress { margin-top: 1rem; }
+.batch-progress p { margin: .4rem 0 0; }
+
+/* ── The viewer ──────────────────────────────────────────────────── */
+.dig-stage { position: relative; aspect-ratio: 4 / 5; width: 100%; background: #000; border-radius: 8px;
+             overflow: hidden; display: grid; place-items: center; }
+.dig-empty { text-align: center; padding: 1.5rem; display: grid; justify-items: center; gap: 1rem; }
+.dig-empty p { margin: 0; font-size: .86rem; }
+.dig-art { width: 100%; height: 100%; display: grid; place-items: center; }
+#player { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; }
+
+/* A record that spins, like the video will. */
+.record { position: relative; width: 62%; aspect-ratio: 1; border-radius: 50%;
+          background: radial-gradient(circle, #222 0 18%, #0d0d0d 19% 100%);
+          box-shadow: 0 0 0 1px #222, 0 12px 40px rgba(0,0,0,.6); animation: spin 6s linear infinite; }
+.record span { position: absolute; left: 50%; top: 50%; width: 6%; height: 6%; border-radius: 50%;
+               background: #000; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px #333; }
+.record--art { overflow: hidden; }
+.record--art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.dig-info p { margin: 0; }
+.info-title { font-weight: 600; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: .25rem .9rem; margin: .7rem 0; font-size: .8rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+.facts dd.pass::after { content: " ✓"; color: var(--ok); }
+.facts dd.fail { color: var(--danger); }
+#download { width: 100%; }
+
+@media (max-width: 980px) {
+  body.dig { height: auto; overflow: auto; }
+  .dig-layout { grid-template-columns: 1fr; }
+  .viewer-pane { border-left: none; border-top: 1px solid var(--line); }
+}

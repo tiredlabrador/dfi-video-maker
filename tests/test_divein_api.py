@@ -588,3 +588,61 @@ def test_a_strange_excerpt_request_gets_a_plain_answer(server, two_part_mix, que
     with pytest.raises(urllib.error.HTTPError) as caught:
         get(server, f"/api/divein/excerpt?audio={token}&{query}")
     assert caught.value.code == 400
+
+
+# ── the redesigned page's needs ─────────────────────────────────────────
+def test_the_square_jpg_can_be_left_out_of_an_export(server, media):
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    job = post_json(server, "/api/divein/export", design(p, a, starts="0:02", square=False))
+    done = wait(server, job["id"])
+    assert done["status"] == "done", done.get("error")
+    assert [f["name"][-4:] for f in done["files"]] == [".mp4"]
+
+
+def test_an_uploaded_photo_can_be_fetched_back_for_the_page(server, media):
+    """After a reload the page shows the photo again without asking for it."""
+    _, photo = media
+    token = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    response = get(server, f"/api/divein/photo?token={token}")
+    assert response.headers["Content-Type"] == "image/jpeg"
+    assert response.read() == photo
+
+
+@pytest.mark.parametrize("token", ["", "nope.jpg", "../app.js", "..%2F..%2Frun"])
+def test_only_uploaded_photos_can_be_fetched(server, token):
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        get(server, f"/api/divein/photo?token={token}")
+    assert caught.value.code in (400, 404)
+
+
+def test_uploads_outlive_a_restart_of_the_app():
+    """The app's scratch folder is wiped on every start: a reload must still find the mix."""
+    import os
+    srv = create_server(host="127.0.0.1", port=0)
+    try:
+        uploads = srv.divein.uploads
+        assert not uploads.startswith(srv.render_service.work_dir)
+        assert uploads.startswith(os.path.expanduser("~/Library/Caches"))
+    finally:
+        srv.server_close()
+
+
+def test_a_test_server_keeps_its_uploads_in_its_own_folder(server, tmp_path):
+    assert server.divein.uploads.startswith(str(tmp_path))
+
+
+def test_old_uploads_are_cleared_to_keep_the_folder_in_bounds(tmp_path):
+    import os
+    import time as clock
+    from app.divein.api import tidy_uploads
+    folder = tmp_path / "uploads"
+    folder.mkdir()
+    (folder / "half.part").write_bytes(b"x" * 10)
+    for i, age in enumerate([300, 200, 100]):
+        f = folder / f"{i}.mp3"
+        f.write_bytes(b"x" * 1000)
+        os.utime(f, (clock.time() - age, clock.time() - age))
+    tidy_uploads(str(folder), max_bytes=2500)
+    assert sorted(os.listdir(folder)) == ["1.mp3", "2.mp3"]

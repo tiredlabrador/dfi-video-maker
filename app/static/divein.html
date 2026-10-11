@@ -9,206 +9,228 @@
 </head>
 <body class="divein">
 
-<header class="bar">
-  <div class="mark">DFI</div>
-  <h1>Video Maker</h1>
-  <div class="health" id="health" aria-live="polite"></div>
+<!-- Small icons, drawn once and reused. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h4v16H6zM14 4h4v16h-4z"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path fill="currentColor" d="M6 5h2v14H6zM20 5.5v13a.8.8 0 0 1-1.2.7L9.5 12.7a.8.8 0 0 1 0-1.4l9.3-6.5a.8.8 0 0 1 1.2.7z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path fill="currentColor" d="M16 5h2v14h-2zM4 5.5v13a.8.8 0 0 0 1.2.7l9.3-6.5a.8.8 0 0 0 0-1.4L5.2 4.8A.8.8 0 0 0 4 5.5z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></symbol>
+  <symbol id="i-photo" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M3 6.5A1.5 1.5 0 0 1 4.5 5h15A1.5 1.5 0 0 1 21 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5zM3 16l5-5 4 4 3-3 6 6"/><circle cx="16" cy="9" r="1.5" fill="currentColor"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M3 5h18v14H3zM7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="brand"><span class="mark">DFI</span> Video Maker</div>
+  <nav class="appswitch" aria-label="Video type">
+    <a href="/">The Dig</a>
+    <a href="/static/divein.html" aria-current="page">Dive In</a>
+  </nav>
+  <div class="spacer"></div>
+  <div class="status" id="health" aria-live="polite">Connecting…</div>
+  <div class="actions">
+    <button type="button" class="btn btn--ghost" id="preview-btn" title="Render the clip under the playhead, small and short, with sound and every effect">Preview clip</button>
+    <button type="button" class="btn" id="export-btn">Export</button>
+  </div>
 </header>
 
-<nav class="tabs">
-  <a class="tab" href="/">The Dig</a>
-  <a class="tab is-active" href="/static/divein.html" aria-current="page">Dive In</a>
-</nav>
-
-<main>
-  <section class="panel">
-    <h2>1 &nbsp;The mix</h2>
-    <label class="drop" id="audio-drop" for="audio-input">
+<div class="editor" id="editor">
+  <!-- ══ Project: what goes in ══════════════════════════════════════ -->
+  <aside class="pane pane--project" aria-label="Project">
+    <section class="section">
+      <div class="section-head"><h2>Mix</h2></div>
+      <button type="button" class="filecard" id="audio-drop">
+        <span class="thumb"><svg><use href="#i-music"/></svg></span>
+        <span class="what"><span class="name" id="audio-label">Choose the mix</span>
+          <span class="sub" id="audio-hint">or drop it anywhere</span></span>
+      </button>
       <input type="file" id="audio-input" accept="audio/*,.mp3,.wav,.flac,.m4a,.aiff" hidden>
-      <span class="drop-icon" aria-hidden="true">♫</span>
-      <span class="drop-text" id="audio-label">Drop the mix here, or click to choose</span>
-      <span class="drop-hint" id="audio-hint">Any length</span>
-    </label>
+    </section>
 
-    <h2>2 &nbsp;Camera footage <span class="optional">optional</span></h2>
-    <div class="field" id="footage-row">
-      <label for="footage-folder">The folder with the camera’s videos</label>
-      <div class="footage-find">
-        <input type="text" id="footage-folder" placeholder="/Volumes/…/10.02 - Pirate October"
-               autocomplete="off" spellcheck="false">
-        <button type="button" class="btn btn--small btn--ghost" id="footage-btn">Find the mix</button>
+    <section class="section">
+      <div class="section-head"><h2>Camera footage</h2><span class="tag">optional</span></div>
+      <div class="row">
+        <input type="text" class="input" id="footage-folder" placeholder="The footage folder’s location"
+               autocomplete="off" spellcheck="false"
+               title="In Finder, right-click the folder, hold Option, and choose Copy as Pathname">
+        <button type="button" class="btn btn--small btn--ghost" id="footage-btn">Find</button>
       </div>
-      <label class="check" id="lut-row" hidden><input type="checkbox" id="lut-on" checked>
-        Correct D-Log colours (DJI’s colour file)</label>
-      <p class="hint" id="footage-status">In Finder, right-click the folder, hold Option, and choose Copy as Pathname.</p>
-    </div>
+      <p class="small muted footage-status" id="footage-status"></p>
+      <label class="switch" id="lut-row" hidden>D-Log colour fix<input type="checkbox" id="lut-on" checked></label>
+    </section>
 
-    <h2>3 &nbsp;Clips</h2>
-    <p class="hint" id="clips-hint">Choose the mix, then click on the timeline along the bottom of the window to add clips.</p>
-    <ul class="clips" id="clips"></ul>
-    <audio id="listen" preload="auto" hidden></audio>
-    <details class="advanced type-times">
-      <summary>Type the times instead</summary>
-      <div class="field">
-        <input type="text" id="starts" placeholder="45:10, 1:02:30" autocomplete="off">
-        <p class="hint">One video per start time, separated by commas.</p>
-      </div>
-    </details>
-    <div class="field inline">
-      <label for="clip-seconds">Clip length</label>
-      <input type="number" id="clip-seconds" value="25" min="1" max="120" step="1">
-      <span class="hint">seconds</span>
-    </div>
-
-    <h2>4 &nbsp;Photo &amp; details</h2>
-    <p class="hint section-hint">The photo is for photo clips and the 1:1 JPG: not needed if every clip uses footage.</p>
-    <label class="drop" id="photo-drop" for="photo-input">
+    <section class="section">
+      <div class="section-head"><h2>Photo</h2><span class="tag">optional</span></div>
+      <button type="button" class="filecard" id="photo-drop">
+        <span class="thumb" id="photo-thumb"><svg><use href="#i-photo"/></svg></span>
+        <span class="what"><span class="name" id="photo-label">Choose a photo</span>
+          <span class="sub">for photo clips and the JPG</span></span>
+      </button>
       <input type="file" id="photo-input" accept="image/*" hidden>
-      <span class="drop-icon" aria-hidden="true">◐</span>
-      <span class="drop-text" id="photo-label">Drop a photo here, or click to choose</span>
-      <span class="drop-hint">Or paste one, or drop it on the preview. Drag the preview to move it; scroll or pinch to zoom.</span>
-    </label>
-    <div class="field inline" id="zoom-row" hidden>
-      <label for="zoom">Zoom</label>
-      <input type="range" id="zoom" min="1" max="3" step="0.01" value="1">
-      <button type="button" class="link" id="reset-crop">Reset</button>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><h2>Details</h2></div>
+      <div class="details-grid">
+        <div><label class="label" for="artist">Artist</label>
+          <textarea class="input" id="artist" rows="2" placeholder="Artist&#10;Name" autocomplete="off"></textarea></div>
+        <div><label class="label" for="episode">Episode</label>
+          <input type="text" class="input" id="episode" value="02.01" autocomplete="off"></div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ══ Viewer: the moment under the playhead ══════════════════════ -->
+  <main class="viewer" aria-label="Viewer">
+    <div class="viewer-head">
+      <div class="clip-title"><strong id="clip-title">No mix yet</strong> <span class="muted small" id="clip-range"></span></div>
+      <div class="spacer"></div>
+      <div class="seg" role="radiogroup" aria-label="This clip uses" id="source-seg" hidden>
+        <button type="button" role="radio" data-value="video" aria-checked="true"><svg width="14" height="14"><use href="#i-film"/></svg> Footage</button>
+        <button type="button" role="radio" data-value="photo" aria-checked="false"><svg width="14" height="14"><use href="#i-photo"/></svg> Photo</button>
+      </div>
+      <button type="button" class="btn btn--small btn--ghost" id="add-here" hidden><svg><use href="#i-plus"/></svg> Clip here</button>
+      <button type="button" class="icon-btn" id="delete-clip" title="Remove this clip (Delete)" hidden><svg><use href="#i-trash"/></svg></button>
     </div>
 
-    <div class="field">
-      <label for="artist">Artist name</label>
-      <textarea id="artist" rows="2" placeholder="Artist&#10;Name" autocomplete="off"></textarea>
-      <p class="hint">Up to two lines. Press return for your own line break.</p>
-    </div>
-    <div class="field">
-      <label for="episode">Episode</label>
-      <input type="text" id="episode" value="02.01" autocomplete="off">
-    </div>
-
-    <h2>5 &nbsp;Style</h2>
-    <p class="hint control-label">Footage look</p>
-    <div class="look-options" id="look-options">
-      <label class="check"><input type="checkbox" id="look-bw" checked> Black and white</label>
-      <label class="check"><input type="checkbox" id="look-contrast" checked> Contrast</label>
-      <label class="check"><input type="checkbox" id="look-grain" checked> Grain</label>
-      <label class="check"><input type="checkbox" id="look-vignette" checked> Darkened edges</label>
-      <label class="check"><input type="checkbox" id="look-ghost" checked> Ghost</label>
-    </div>
-    <div class="field inline">
-      <label for="look-brightness">Brightness</label>
-      <input type="range" id="look-brightness" min="-50" max="100" step="1" value="0">
-      <span class="hint" id="look-brightness-label">0</span>
-      <button type="button" class="link" id="reset-brightness">Reset</button>
-    </div>
-    <p class="hint">Brightness is set on the footage as filmed, before any D-Log correction. The ghost (a soft echo that jumps on the hits) shows in Preview with sound.</p>
-    <p class="hint control-label">Tape, name and rings <span class="optional">photo clips, for now</span></p>
-    <div class="segmented swatches" role="radiogroup" aria-label="Colour" id="colour-choice">
-      <button type="button" role="radio" data-value="yellow" aria-checked="true"><i style="background:#fffe01"></i>Yellow</button>
-      <button type="button" role="radio" data-value="red" aria-checked="false"><i style="background:#ea2020"></i>Red</button>
-      <button type="button" role="radio" data-value="green" aria-checked="false"><i style="background:#3dff00"></i>Green</button>
-      <button type="button" role="radio" data-value="white" aria-checked="false"><i style="background:#ffffff"></i>White</button>
-    </div>
-    <label class="check"><input type="checkbox" id="rings-on" checked> Show the rings</label>
-    <div id="motion-options">
-      <p class="hint control-label">The rings move with</p>
-      <div class="segmented" role="radiogroup" aria-label="Motion" id="motion-choice">
-        <button type="button" role="radio" data-value="level" aria-checked="true">Volume</button>
-        <button type="button" role="radio" data-value="kicks" aria-checked="false">Kick drums</button>
+    <div class="viewer-area" id="viewer-area">
+      <div class="stage" id="stage">
+        <div class="stage-empty" id="stage-empty"><p id="empty-title">Start with the mix</p><p class="muted" id="empty-text">Choose it on the left, or drop it anywhere on this page.</p></div>
+        <div class="frame" id="frame" hidden>
+          <img id="still" alt="Live preview" draggable="false" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
+          <canvas id="draft" hidden></canvas>
+        </div>
+        <div class="footage-frame" id="footage-frame">
+          <video id="footage" muted playsinline preload="auto"></video>
+          <canvas id="graded" hidden></canvas>
+          <div class="footage-grain" id="footage-grain" hidden></div>
+          <div class="footage-vignette" id="footage-vignette" hidden></div>
+        </div>
+        <video id="player" controls playsinline hidden></video>
+        <div class="exact-bar" id="exact-bar" hidden>Rendered preview <button type="button" class="icon-btn" id="exact-close" title="Back to the live view"><svg><use href="#i-close"/></svg></button></div>
+        <div class="busy" id="busy" hidden></div>
+        <div class="frame-tools" id="frame-tools" hidden>
+          <span class="small" id="frame-what">Framing</span>
+          <input type="range" id="frame-zoom" min="1" max="2" step="0.01" value="1" aria-label="Zoom">
+          <button type="button" class="link" id="frame-reset">Reset</button>
+        </div>
       </div>
     </div>
-    <label class="check"><input type="checkbox" id="twitch" checked> Ghost twitch on each hit</label>
 
-    <h2>6 &nbsp;Make it</h2>
-    <div class="actions">
-      <button type="button" class="btn btn--ghost" id="preview-btn">Preview with sound</button>
-      <button type="button" class="btn" id="export-btn">Export</button>
-    </div>
-    <p class="hint" id="make-hint">Preview: a short, small clip of the selected clip. Export: full-size MP4s, plus the 1:1 JPG when there’s a photo. Footage clips have no tape, name or rings yet.</p>
-
-    <details class="advanced tuning">
-      <summary>Tuning</summary>
-      <p class="hint">Paste just the numbers you want to change, as JSON. Example:
-        <code>{"ghost": {"opacity": 0.3}}</code></p>
-      <textarea id="overrides" rows="7" spellcheck="false">{}</textarea>
-      <div class="actions">
-        <button type="button" class="btn btn--small btn--ghost" id="apply-overrides">Apply</button>
-        <button type="button" class="link" id="clear-overrides">Clear</button>
+    <div class="transport">
+      <div class="time"><span id="time-now">0:00</span><span class="muted"> / <span id="time-total">0:00</span></span></div>
+      <div class="transport-buttons">
+        <button type="button" class="icon-btn" id="prev-clip" title="Previous clip"><svg><use href="#i-prev"/></svg></button>
+        <button type="button" class="icon-btn icon-btn--round" id="play-btn" title="Play (Space)"><svg id="play-icon"><use href="#i-play"/></svg></button>
+        <button type="button" class="icon-btn" id="next-clip" title="Next clip"><svg><use href="#i-next"/></svg></button>
       </div>
-      <details class="all-settings">
-        <summary>All settings and their defaults</summary>
-        <pre id="defaults"></pre>
-      </details>
-    </details>
-  </section>
-
-  <section class="panel panel--result">
-    <div class="result-head">
-      <h2>Preview</h2>
-      <div class="segmented segmented--small" role="radiogroup" aria-label="Format" id="format-choice">
+      <div class="seg format-seg" role="radiogroup" aria-label="Format" id="format-choice">
         <button type="button" role="radio" data-value="portrait" aria-checked="true">4:5 video</button>
         <button type="button" role="radio" data-value="square" aria-checked="false">1:1 JPG</button>
       </div>
     </div>
+    <audio id="listen" preload="auto" hidden></audio>
+  </main>
 
-    <div class="stage stage--divein" id="stage">
-      <div class="stage-empty" id="stage-empty"><p>Choose the mix and find its footage, or choose a photo, to start.</p></div>
-      <div class="frame" id="frame" hidden>
-        <img id="still" alt="Live preview" draggable="false">
-        <canvas id="draft" hidden></canvas>
+  <!-- ══ Style ══════════════════════════════════════════════════════ -->
+  <aside class="pane pane--style" aria-label="Style">
+    <section class="section">
+      <div class="section-head"><h2>Footage look</h2></div>
+      <div class="chips" id="look-chips">
+        <button type="button" class="chip" id="look-bw" aria-pressed="true">Black &amp; white</button>
+        <button type="button" class="chip" id="look-contrast" aria-pressed="true">Contrast</button>
+        <button type="button" class="chip" id="look-grain" aria-pressed="true">Grain</button>
+        <button type="button" class="chip" id="look-vignette" aria-pressed="true">Dark edges</button>
+        <button type="button" class="chip" id="look-ghost" aria-pressed="true" title="A soft echo that jumps on the hits. Shows in Preview clip and the export.">Ghost</button>
       </div>
-      <video id="player" controls playsinline hidden></video>
-      <div class="footage-frame" id="footage-frame">
-        <video id="footage" muted playsinline preload="auto"></video>
-        <canvas id="graded" hidden></canvas>
-        <div class="footage-grain" id="footage-grain" hidden></div>
-        <div class="footage-vignette" id="footage-vignette" hidden></div>
+      <div class="slider-row" title="Set on the footage as filmed, before the D-Log colour fix">
+        <span class="label">Brightness</span>
+        <input type="range" id="look-brightness" min="-50" max="100" step="1" value="0">
+        <button type="button" class="link value" id="look-brightness-label" title="Reset">0</button>
       </div>
-      <div class="busy" id="busy" hidden></div>
-    </div>
+    </section>
 
-    <div class="field inline" id="framing-row" hidden>
-      <label for="footage-zoom">Framing</label>
-      <input type="range" id="footage-zoom" min="1" max="2" step="0.01" value="1">
-      <button type="button" class="link" id="reset-framing">Reset</button>
-    </div>
-    <p class="hint" id="framing-hint" hidden>Drag the footage to move it; scroll or use the slider to zoom. Each clip keeps its own framing.</p>
+    <section class="section">
+      <div class="section-head"><h2>Graphics</h2><span class="tag">photo clips</span></div>
+      <div class="seg swatches" role="radiogroup" aria-label="Colour" id="colour-choice">
+        <button type="button" role="radio" data-value="yellow" aria-checked="true" title="Yellow"><i style="background:#fffe01"></i></button>
+        <button type="button" role="radio" data-value="red" aria-checked="false" title="Red"><i style="background:#ea2020"></i></button>
+        <button type="button" role="radio" data-value="green" aria-checked="false" title="Green"><i style="background:#3dff00"></i></button>
+        <button type="button" role="radio" data-value="white" aria-checked="false" title="White"><i style="background:#ffffff"></i></button>
+      </div>
+      <label class="switch">Rings<input type="checkbox" id="rings-on" checked></label>
+      <div class="seg" role="radiogroup" aria-label="The rings move with" id="motion-choice">
+        <button type="button" role="radio" data-value="level" aria-checked="true">Follow volume</button>
+        <button type="button" role="radio" data-value="kicks" aria-checked="false">Follow kicks</button>
+      </div>
+      <label class="switch" title="The photo's ghost jumps on each hit">Twitch on hits<input type="checkbox" id="twitch" checked></label>
+    </section>
 
-    <div class="field scrub" id="scrub-row" hidden>
-      <label class="check"><input type="checkbox" id="scrub-on"> Show the rings at a moment in the selected clip</label>
-      <input type="range" id="scrub" min="0" max="25" step="0.0333" value="0" disabled>
-      <span class="hint" id="scrub-label">at rest</span>
-    </div>
+    <section class="section">
+      <details class="more">
+        <summary>Advanced</summary>
+        <label class="label" for="starts" style="margin-top:.7rem">Clip start times</label>
+        <input type="text" class="input" id="starts" placeholder="45:10, 1:02:30" autocomplete="off">
+        <label class="label" for="overrides" style="margin-top:.7rem">Tuning (JSON)</label>
+        <textarea class="input mono" id="overrides" rows="5" spellcheck="false">{}</textarea>
+        <div class="row" style="margin-top:.4rem">
+          <button type="button" class="btn btn--small btn--ghost" id="apply-overrides">Apply</button>
+          <button type="button" class="link" id="clear-overrides">Clear</button>
+        </div>
+        <details class="more" style="margin-top:.6rem"><summary>All settings</summary><pre id="defaults" class="defaults"></pre></details>
+      </details>
+    </section>
+  </aside>
 
-    <div class="progress" id="progress" hidden>
+  <!-- ══ Export ═════════════════════════════════════════════════════ -->
+  <aside class="export-panel" id="export-panel" hidden aria-label="Export">
+    <div class="section-head export-head"><h2>Export</h2>
+      <button type="button" class="icon-btn" id="export-close" title="Close"><svg><use href="#i-close"/></svg></button></div>
+    <ol class="export-list" id="export-list"></ol>
+    <label class="switch" id="export-square-row">1:1 JPG for SoundCloud<input type="checkbox" id="export-square" checked></label>
+    <button type="button" class="btn export-go" id="export-go">Export</button>
+    <div class="export-progress" id="export-progress" hidden>
       <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-      <p class="progress-text" id="progress-text"></p>
+      <p class="small muted" id="progress-text"></p>
     </div>
-    <div class="error" id="error" hidden role="alert"></div>
-    <div class="warning" id="warning" hidden role="status"></div>
-
     <div class="results" id="files" hidden>
-      <h3>Files</h3>
-      <ul id="file-list"></ul>
-      <div class="sync-notes" id="sync-notes" hidden></div>
+      <ul class="file-list" id="file-list"></ul>
       <a class="btn btn--small" id="zip-link" hidden>Download all</a>
     </div>
-  </section>
+  </aside>
+</div>
 
-  <section class="timeline-dock" id="timeline" hidden aria-label="Mix timeline">
-    <div class="timeline-bar">
-      <span class="hint" id="view-range"></span>
-      <span class="hint timeline-hover" id="timeline-hover"></span>
-      <div class="segmented segmented--small" role="radiogroup" aria-label="Close-up shows" id="zoom-choice">
-        <button type="button" role="radio" data-value="60" aria-checked="false">1 min</button>
-        <button type="button" role="radio" data-value="240" aria-checked="true">4 min</button>
-        <button type="button" role="radio" data-value="900" aria-checked="false">15 min</button>
-      </div>
-      <span class="hint" id="timeline-length"></span>
+<!-- ══ Timeline ═════════════════════════════════════════════════════ -->
+<section class="dock" id="timeline" aria-label="Timeline">
+  <div class="dock-bar">
+    <div class="clip-chips" id="clip-chips"></div>
+    <button type="button" class="btn btn--small btn--ghost" id="add-clip" title="Add a clip at the playhead (A)"><svg><use href="#i-plus"/></svg> Clip</button>
+    <div class="spacer"></div>
+    <span class="small muted hover-read" id="timeline-hover"></span>
+    <label class="small muted length">Length <input type="number" class="input" id="clip-seconds" value="25" min="1" max="120" step="1"> s</label>
+    <div class="seg" role="radiogroup" aria-label="Close-up shows" id="zoom-choice">
+      <button type="button" role="radio" data-value="60" aria-checked="false">1 min</button>
+      <button type="button" role="radio" data-value="240" aria-checked="true">4 min</button>
+      <button type="button" role="radio" data-value="900" aria-checked="false">15 min</button>
     </div>
-    <canvas id="overview-canvas" title="The whole mix: click or drag to choose what the close-up shows"></canvas>
-    <canvas id="closeup-canvas"></canvas>
-  </section>
-</main>
+  </div>
+  <canvas id="overview-canvas" title="The whole mix: click to go there"></canvas>
+  <canvas id="closeup-canvas"></canvas>
+  <div class="dock-empty" id="dock-empty">The mix appears here once it’s chosen.</div>
+</section>
 
-<script src="/static/divein.js"></script>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="/static/divein/core.js"></script>
+<script src="/static/divein/viewer.js"></script>
+<script src="/static/divein/look.js"></script>
+<script src="/static/divein/timeline.js"></script>
+<script src="/static/divein/transport.js"></script>
+<script src="/static/divein/media.js"></script>
+<script src="/static/divein/export.js"></script>
+<script src="/static/divein/main.js"></script>
 </body>
 </html>

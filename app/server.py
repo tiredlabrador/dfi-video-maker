@@ -545,9 +545,12 @@ class DFIServer(ThreadingHTTPServer):
         from app.divein.api import DiveInService      # Dive In
         # A real run's scratch folder is wiped on every start, so the camera
         # sound it took minutes to read is kept in the Mac's own caches instead.
-        cache = os.path.expanduser("~/Library/Caches/DFI Video Maker/footage-audio") \
-            if self.render_service._owns_work_dir else None
-        self.divein = DiveInService(self.render_service.work_dir, self.jobs, cache)
+        # So are uploaded mixes and photos, so a reload picks up where you were.
+        caches = os.path.expanduser("~/Library/Caches/DFI Video Maker")
+        owned = self.render_service._owns_work_dir
+        self.divein = DiveInService(self.render_service.work_dir, self.jobs,
+                                    os.path.join(caches, "footage-audio") if owned else None,
+                                    os.path.join(caches, "divein-uploads") if owned else None)
         self.verbose = verbose
         self.config_overrides = config_overrides or {}
 

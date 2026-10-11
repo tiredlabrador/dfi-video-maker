@@ -3,133 +3,84 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DFI Video Maker</title>
+<title>The Dig — DFI Video Maker</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/dig.css">
 </head>
-<body>
+<body class="dig">
 
-<header class="bar">
-  <div class="mark">DFI</div>
-  <h1>Video Maker</h1>
-  <div class="health" id="health" aria-live="polite"></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h4v16H6zM14 4h4v16h-4z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></g></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M3 6.5A1.5 1.5 0 0 1 4.5 5h15A1.5 1.5 0 0 1 21 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5zM3 16l5-5 4 4 3-3 6 6"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="brand"><span class="mark">DFI</span> Video Maker</div>
+  <nav class="appswitch" aria-label="Video type">
+    <a href="/" aria-current="page">The Dig</a>
+    <a href="/static/divein.html">Dive In</a>
+  </nav>
+  <div class="spacer"></div>
+  <div class="status" id="health" aria-live="polite">Connecting…</div>
+  <div class="actions">
+    <button type="button" class="btn btn--ghost" id="preview-all" title="Small, quick versions of every track">Preview all</button>
+    <button type="button" class="btn" id="render-all">Render all</button>
+  </div>
 </header>
 
-<nav class="tabs" role="tablist">
-  <button role="tab" id="tab-single" class="tab is-active" aria-selected="true"
-          aria-controls="pane-single">One track</button>
-  <button role="tab" id="tab-batch" class="tab" aria-selected="false"
-          aria-controls="pane-batch">A whole batch</button>
-  <a class="tab" href="/static/divein.html" style="text-decoration:none">Dive In</a>
-</nav>
-
-<main>
-  <!-- ══ ONE TRACK ══════════════════════════════════════════════════ -->
-  <section class="panel" id="pane-single" role="tabpanel" aria-labelledby="tab-single">
-    <h2>1 &nbsp;Choose a track</h2>
-
-    <label class="drop" id="audio-drop" for="audio-input">
-      <input type="file" id="audio-input" accept="audio/*,.mp3,.wav,.flac,.m4a,.aiff" hidden>
-      <span class="drop-icon" aria-hidden="true">♫</span>
-      <span class="drop-text" id="audio-label">Drop an audio file here, or click to choose</span>
-      <span class="drop-hint">MP3, WAV, FLAC or M4A</span>
-    </label>
-
-    <div class="detail" id="audio-detail" hidden>
-      <div class="detail-row"><span>Length</span><strong id="audio-duration">—</strong></div>
-      <div class="detail-row"><span>Artwork</span><strong id="artwork-source">—</strong></div>
+<div class="dig-layout">
+  <main class="tracks-pane" aria-label="Tracks">
+    <div class="tracks-head">
+      <h2 id="tracks-count">Tracks</h2>
+      <button type="button" class="btn btn--small btn--ghost" id="add-tracks"><svg><use href="#i-plus"/></svg> Add tracks</button>
+      <div class="spacer"></div>
+      <span class="small muted" id="tracks-hint">Drag to reorder: the numbers are the posting order.</span>
+      <a class="btn btn--small" id="zip-download" hidden download>Download all</a>
     </div>
+    <input type="file" id="tracks-input" accept="audio/*,.mp3,.wav,.flac,.m4a,.aiff" multiple hidden>
+    <input type="file" id="art-input" accept="image/*" hidden>
 
-    <h2>2 &nbsp;Check the details</h2>
-    <div class="field">
-      <label for="track">Track</label>
-      <input type="text" id="track" placeholder="Track title" autocomplete="off">
+    <ol class="track-list" id="track-list"></ol>
+
+    <button type="button" class="tracks-empty" id="tracks-empty">
+      <svg><use href="#i-music"/></svg>
+      <strong>Drop tracks here</strong>
+      <span class="muted">or click to choose. One track or a whole batch.</span>
+    </button>
+
+    <div class="batch-progress" id="batch-progress" hidden>
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <p class="small muted" id="progress-text"></p>
     </div>
-    <div class="field">
-      <label for="artist">Artist</label>
-      <input type="text" id="artist" placeholder="Artist name" autocomplete="off">
-    </div>
-    <div class="field">
-      <label for="clip-start">Clip start</label>
-      <input type="text" id="clip-start" value="0:00" placeholder="mm:ss"
-             inputmode="numeric" autocomplete="off">
-      <p class="hint">Where the 25&nbsp;seconds begins. <span id="clip-warning" class="warn" hidden></span></p>
-    </div>
+  </main>
 
-    <details class="advanced">
-      <summary>Replace the artwork</summary>
-      <label class="drop drop--small" id="art-drop" for="art-input">
-        <input type="file" id="art-input" accept="image/*" hidden>
-        <span class="drop-text" id="art-label">Use a different image instead</span>
-      </label>
-      <button type="button" class="link" id="clear-art" hidden>Remove and use the track's own artwork</button>
-    </details>
-
-    <h2>3 &nbsp;Make the video</h2>
-    <div class="actions">
-      <button type="button" id="preview-btn" class="btn btn--ghost">Quick preview</button>
-      <button type="button" id="render-btn" class="btn">Render full video</button>
-    </div>
-    <p class="hint">A quick preview is small and short — same framing, same spin, ready in a couple of seconds.</p>
-  </section>
-
-  <!-- ══ BATCH ═════════════════════════════════════════════════════ -->
-  <section class="panel" id="pane-batch" role="tabpanel" aria-labelledby="tab-batch" hidden>
-    <h2>1 &nbsp;Add the tracks</h2>
-    <label class="drop" id="batch-drop" for="batch-input">
-      <input type="file" id="batch-input" accept="audio/*,.mp3,.wav,.flac,.m4a,.aiff" multiple hidden>
-      <span class="drop-icon" aria-hidden="true">♫</span>
-      <span class="drop-text">Drop the whole folder of audio files here</span>
-      <span class="drop-hint">They render in the order shown, and are numbered to match</span>
-    </label>
-
-    <ol class="rows" id="batch-rows"></ol>
-    <p class="hint" id="batch-empty">Nothing added yet.</p>
-
-    <h2>2 &nbsp;Make the videos</h2>
-    <div class="actions">
-      <button type="button" id="batch-preview-btn" class="btn btn--ghost">Quick preview of all</button>
-      <button type="button" id="batch-render-btn" class="btn">Render the batch</button>
-    </div>
-    <p class="hint">The numbers are the posting order. Use the arrows to move a track.</p>
-  </section>
-
-  <!-- ══ RESULT ════════════════════════════════════════════════════ -->
-  <section class="panel panel--result" aria-labelledby="result-heading">
-    <h2 id="result-heading">Result</h2>
-
-    <div class="stage" id="stage">
-      <div class="stage-empty" id="stage-empty">
-        <div class="phone"><div class="disc" aria-hidden="true"><span class="spindle"></span></div></div>
-        <p>Your video will appear here.</p>
+  <aside class="viewer-pane" aria-label="Preview">
+    <div class="dig-stage" id="stage">
+      <div class="dig-empty" id="stage-empty">
+        <div class="record" aria-hidden="true"><span></span></div>
+        <p class="muted">The selected track’s artwork and video show here.</p>
       </div>
-      <div class="stage-art" id="stage-art" hidden>
-        <img id="artwork-preview" alt="The artwork this video will use">
-        <p class="caption-note" id="artwork-note"></p>
+      <div class="dig-art" id="stage-art" hidden>
+        <div class="record record--art" aria-hidden="true"><img id="art-preview" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="><span></span></div>
       </div>
       <video id="player" controls playsinline hidden></video>
     </div>
-
-    <div class="progress" id="progress" hidden>
-      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-      <p class="progress-text" id="progress-text">Starting…</p>
+    <div class="dig-info" id="info" hidden>
+      <p class="info-title" id="info-title"></p>
+      <p class="small muted" id="info-art"></p>
+      <dl class="facts" id="facts"></dl>
+      <a class="btn btn--small" id="download" download hidden>Download</a>
     </div>
+  </aside>
+</div>
 
-    <div class="error" id="error" hidden role="alert"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
 
-    <div class="facts" id="facts" hidden>
-      <h3>What was produced</h3>
-      <dl id="facts-list"></dl>
-      <a class="btn btn--small" id="download" download>Download the MP4</a>
-    </div>
-
-    <div class="results" id="batch-results" hidden>
-      <h3>Tracks</h3>
-      <ul id="batch-result-list"></ul>
-      <a class="btn btn--small" id="zip-download" download hidden>Download all as a zip</a>
-    </div>
-  </section>
-</main>
-
-<script src="/static/app.js"></script>
+<script type="module" src="/static/app.js"></script>
 </body>
 </html>

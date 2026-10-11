@@ -55,7 +55,7 @@ SHUTTER_FRACTION    = 0.7          # blur amount; 0.5 = 180-degree shutter, high
 OUTPUT_DIR          = "output"     # folder the finished MP4 is written to
 # ---------------------------------------------------------------------------
 
-AUDIO_EXTENSIONS = (".mp3", ".flac")
+AUDIO_EXTENSIONS = (".mp3", ".flac", ".m4a", ".wav", ".aiff", ".aif")
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +173,29 @@ def extract_embedded_artwork(audio_path: str):
         if flac.pictures:
             front = next((p for p in flac.pictures if p.type == 3), flac.pictures[0])
             data = front.data
+
+    elif ext in (".m4a", ".mp4", ".aac"):
+        from mutagen.mp4 import MP4
+        try:
+            tags = MP4(audio_path).tags
+        except Exception:
+            tags = None
+        covers = tags.get("covr") if tags is not None else None
+        if covers:
+            data = bytes(covers[0])
+
+    elif ext in (".wav", ".aiff", ".aif"):
+        # These can carry ID3 tags (and so a cover) inside; most don't, which is fine.
+        import mutagen
+        try:
+            tags = getattr(mutagen.File(audio_path), "tags", None)
+        except Exception:
+            tags = None
+        if tags is not None and hasattr(tags, "getall"):
+            apics = tags.getall("APIC")
+            if apics:
+                front = next((p for p in apics if p.type == 3), apics[0])
+                data = front.data
 
     else:
         raise RenderError(f"Unsupported audio type: {ext}")
@@ -645,10 +668,12 @@ def read_audio_tags(audio_path: str):
             result["artist"] = str(artist) if artist else None
         else:
             import mutagen
-            tags = mutagen.File(audio_path)
+            # "easy" maps each format's own tag names (M4A's ©nam, FLAC's TITLE...)
+            # onto plain "title" and "artist".
+            tags = mutagen.File(audio_path, easy=True)
             if tags:
-                for key, field in (("title", "title"), ("artist", "artist")):
-                    value = tags.get(key) or tags.get(field.upper())
+                for field in ("title", "artist"):
+                    value = tags.get(field) or tags.get(field.upper())
                     if value:
                         result[field] = str(value[0] if isinstance(value, list) else value)
     except Exception:
