@@ -32,6 +32,7 @@ from app.divein.config import DEFAULTS, ConfigError, merge_config
 from app.divein.footage import FootageError, find_mix, list_videos, tidy_cache
 from app.divein.render import render_still, render_video, write_wav
 from app.divein import footage_clip, transitions
+from app.divein.footage_look import OPTIONS as LOOK_OPTIONS, FootageLook
 
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024 * 1024        # 3GB: any mix, any format
 CHUNK = 1024 * 1024
@@ -600,6 +601,26 @@ class DiveInService:
         return {"cx": number("cx", 0.5, 0, 1), "cy": number("cy", 0.5, 0, 1),
                 "zoom": number("zoom", 1.0, 1, footage_clip.MAX_ZOOM)}
 
+    @staticmethod
+    def _footage_look(d: dict) -> dict:
+        """Which parts of the Dive In look go on the footage. All of them unless switched off."""
+        chosen = d.get("footage_look")
+        chosen = chosen if isinstance(chosen, dict) else {}
+        return {k: bool(chosen.get(k, True)) for k in LOOK_OPTIONS}
+
+    def _look_maker(self, d, cfg, mix, start, seconds, fps):
+        """Makes the look for a clip's frames, or None if every part is off."""
+        options = self._footage_look(d)
+        if not any(options.values()):
+            return None
+        episode = str(d.get("episode", "")).strip() or "00.00"
+        analysis = None
+        if options["ghost"] and cfg["twitch"]["enabled"]:
+            # The ghost jumps on the hits, found exactly as for the photo clips.
+            sr = cfg["audio"]["sample_rate"]
+            analysis = analyse(decode_excerpt(mix, start, seconds, sr), sr, fps, cfg, episode)
+        return lambda w, h: FootageLook(cfg, episode, w, h, options, analysis)
+
     def _footage_clip(self, d, cfg, match, video, start, seconds, out, width=None,
                       progress=None, crop=None) -> dict:
         """Cut one footage clip, then measure its sync. Returns that measurement."""
@@ -611,7 +632,8 @@ class DiveInService:
         fps = footage_clip.frame_rate(video)
         camera_sound = footage_clip.render(video, video_t, mix, start, match.get("rate", 1.0),
                                            seconds, out, cfg, fps, lut=lut, width=width,
-                                           progress=progress, **(crop or {}))
+                                           progress=progress, **(crop or {}),
+                                           look=self._look_maker(d, cfg, mix, start, seconds, fps))
         try:
             off_by = footage_clip.measure(out, camera_sound, seconds)
         finally:

@@ -85,7 +85,16 @@
     </div>
 
     <h2>5 &nbsp;Style</h2>
-    <p class="hint section-hint">Applies to photo clips for now.</p>
+    <p class="hint control-label">Footage look</p>
+    <div class="look-options" id="look-options">
+      <label class="check"><input type="checkbox" id="look-bw" checked> Black and white</label>
+      <label class="check"><input type="checkbox" id="look-contrast" checked> Contrast</label>
+      <label class="check"><input type="checkbox" id="look-grain" checked> Grain</label>
+      <label class="check"><input type="checkbox" id="look-vignette" checked> Darkened edges</label>
+      <label class="check"><input type="checkbox" id="look-ghost" checked> Ghost</label>
+    </div>
+    <p class="hint">The ghost (a soft echo that jumps on the hits) shows in Preview with sound.</p>
+    <p class="hint control-label">Tape, name and rings <span class="optional">photo clips, for now</span></p>
     <div class="segmented swatches" role="radiogroup" aria-label="Colour" id="colour-choice">
       <button type="button" role="radio" data-value="yellow" aria-checked="true"><i style="background:#fffe01"></i>Yellow</button>
       <button type="button" role="radio" data-value="red" aria-checked="false"><i style="background:#ea2020"></i>Red</button>
@@ -144,6 +153,8 @@
       <div class="footage-frame" id="footage-frame">
         <video id="footage" muted playsinline preload="auto"></video>
         <canvas id="graded" hidden></canvas>
+        <div class="footage-grain" id="footage-grain" hidden></div>
+        <div class="footage-vignette" id="footage-vignette" hidden></div>
       </div>
       <div class="busy" id="busy" hidden></div>
     </div>

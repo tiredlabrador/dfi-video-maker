@@ -17,6 +17,14 @@ a.tab { text-decoration: none; display: inline-block; }
 h2 .optional { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }
 .section-hint { margin: -.35rem 0 .7rem; }
 .footage-frame { cursor: grab; touch-action: none; }
+.look-options { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; margin-bottom: .5rem; }
+/* A live stand-in for the export's look: the export draws it exactly. */
+.footage-vignette, .footage-grain { position: absolute; inset: 0; pointer-events: none; }
+.footage-vignette {   /* the same ramp as the export: clear to 45%, then to 65% black */
+  background: radial-gradient(ellipse farthest-corner at 50% 37.5%,
+              transparent 45%, rgba(0,0,0,.65) 100%);
+}
+.footage-grain { mix-blend-mode: soft-light; opacity: .9; background-repeat: repeat; }
 .footage-frame.is-dragging { cursor: grabbing; }
 .footage-find { display: flex; gap: .5rem; }
 .footage-find input { flex: 1; min-width: 0; }

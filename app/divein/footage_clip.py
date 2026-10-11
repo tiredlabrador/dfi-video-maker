@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from fractions import Fraction
 
 import numpy as np
 
@@ -154,11 +155,14 @@ def _quoted(path: str) -> str:
 def render(video: str, video_t: float, mix_path: str, mix_t: float, rate: float,
            seconds: float, out_path: str, cfg: dict, fps: float, lut: str | None = None,
            width: int | None = None, cx: float = 0.5, cy: float = 0.5, zoom: float = 1.0,
-           progress=None) -> str:
+           progress=None, look=None) -> str:
     """
     Cut `seconds` of footage from `video_t` (seconds after the picture starts)
     with the mix from `mix_t` under it. Alongside, saves the camera's own sound
     for the same stretch, for `measure`; returns where.
+
+    `look(width, height)`, if given, makes a FootageLook to draw each frame
+    through (black and white, grain and so on).
     """
     first_frame = round(video_t * fps) / fps
     if first_frame < 0:
@@ -184,6 +188,18 @@ def render(video: str, video_t: float, mix_path: str, mix_t: float, rate: float,
     filters += [f"scale={w}:{h}:flags=lanczos", "format=yuv420p"]
     ex = cfg["export"]
     preview = width is not None
+    encode = ["-c:v", "libx264", "-preset", "veryfast" if preview else ex["preset"],
+              "-crf", str(23 if preview else ex["crf"]),
+              "-maxrate", f"{ex['max_mbps']}M", "-bufsize", f"{2 * ex['max_mbps']}M",
+              "-pix_fmt", "yuv420p",
+              "-c:a", "aac", "-ac", "2", "-ar", "44100", "-b:a", "192k",
+              "-t", f"{seconds:.4f}", "-movflags", "+faststart", out_path]
+    check = ["-map", "0:a:0?", "-ac", "1", "-ar", str(MATCH_SR), "-t", f"{seconds:.4f}",
+             "-f", "f32le", camera_sound]
+    if look is not None:
+        _render_looked(video, seek, filters[:-1], w, h, fps, mix_path, mix_start, seconds,
+                       encode, check, look(w, h), progress)
+        return camera_sound
     command = ["ffmpeg", "-y", "-v", "error", "-nostats", "-progress", "pipe:1",
                # A hair early, so the frame at first_frame is the first one kept.
                "-ss", f"{max(0.0, seek):.4f}", "-i", video,
@@ -211,3 +227,44 @@ def render(video: str, video_t: float, mix_path: str, mix_t: float, rate: float,
         print("ffmpeg could not cut the footage:", error[-800:])
         raise ValueError("The footage couldn't be cut. Is the drive still plugged in?")
     return camera_sound
+
+
+def _render_looked(video, seek, filters, w, h, fps, mix_path, mix_start, seconds,
+                   encode, check, look, progress):
+    """
+    The same cut, with every frame drawn through the look on its way: one
+    ffmpeg reads and crops the footage, Python draws each frame, a second
+    ffmpeg encodes it with the mix underneath.
+    """
+    rate = str(Fraction(fps).limit_denominator(1001))
+    frames = int(round(seconds * fps))
+    reader = subprocess.Popen(
+        ["ffmpeg", "-v", "error", "-ss", f"{max(0.0, seek):.4f}", "-i", video,
+         "-map", "0:v:0", "-vf", ",".join(filters), "-r", rate, "-frames:v", str(frames),
+         "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1", *check],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    writer = subprocess.Popen(
+        ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+         "-s", f"{w}x{h}", "-r", rate, "-i", "pipe:0",
+         "-ss", f"{max(0.0, mix_start):.4f}", "-t", f"{seconds:.4f}", "-i", mix_path,
+         "-map", "0:v:0", "-map", "1:a:0", *encode],
+        stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    size = w * h * 3
+    try:
+        for f in range(frames):
+            raw = reader.stdout.read(size)
+            if len(raw) < size:
+                break                                    # the footage ran out early
+            picture = np.frombuffer(raw, np.uint8).reshape(h, w, 3)
+            writer.stdin.write(look.frame(f, picture).tobytes())
+            if progress and f % 10 == 0:
+                progress(f / frames, "Drawing the footage")
+    except BrokenPipeError:
+        pass
+    finally:
+        writer.stdin.close()
+        reader.stdout.close()
+    read_error, write_error = reader.stderr.read(), writer.stderr.read()
+    if reader.wait() != 0 or writer.wait() != 0:
+        print("ffmpeg could not cut the footage:", (read_error + write_error)[-800:])
+        raise ValueError("The footage couldn't be cut. Is the drive still plugged in?")

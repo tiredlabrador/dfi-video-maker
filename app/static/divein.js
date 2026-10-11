@@ -95,6 +95,7 @@ function design(extra = {}) {
     starts: state.starts,                       // exact seconds, not rounded
     sources: state.starts.map((_, i) => clipSource(i)),
     footage_crops: state.starts.map((_, i) => framingOf(i)),
+    footage_look: footageLook(),
     lut: $('lut-on').checked,
     preview_index: state.selected,
     clip_seconds: clipLength(),
@@ -130,6 +131,7 @@ function save() {
       // becoming the default, so it's left behind rather than carried over.
       colour: state.colour, rings_follow: state.motion, twitch: $('twitch').checked,
       overrides: $('overrides').value, footage_folder: $('footage-folder').value,
+      footage_look: footageLook(),
     }));
   } catch { /* private window: fine */ }
 }
@@ -145,6 +147,9 @@ function restore() {
   $('twitch').checked = saved.twitch ?? true;
   $('overrides').value = saved.overrides ?? '{}';
   $('footage-folder').value = saved.footage_folder ?? '';
+  for (const [k, on] of Object.entries(saved.footage_look || {})) {
+    if ($(`look-${k}`)) $(`look-${k}`).checked = Boolean(on);
+  }
   state.colour = saved.colour || 'yellow';
   state.motion = saved.rings_follow || 'level';
   setSegment('colour-choice', state.colour);
@@ -1032,6 +1037,53 @@ function playVideo(url) {
 
 const MAX_FOOTAGE_ZOOM = 2;
 
+/* ── the footage look, live ───────────────────────────────────────── */
+
+const LOOK = ['bw', 'contrast', 'grain', 'vignette', 'ghost'];
+
+function footageLook() {
+  return Object.fromEntries(LOOK.map((k) => [k, $(`look-${k}`).checked]));
+}
+
+/** A grey noise tile for the live grain (the export draws its own, exactly). */
+function grainTile() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d'), img = ctx.createImageData(256, 256);
+  for (let i = 0; i < img.data.length; i += 4) {
+    // Roughly normal, centred on mid grey, spread like the export's (sd 40).
+    const n = (Math.random() + Math.random() + Math.random() - 1.5) * 80 + 128;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = n;
+    img.data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return `url(${c.toDataURL()})`;
+}
+
+let grainTimer = null;
+
+/**
+ * Show the look on the live footage: black and white and contrast as CSS
+ * filters (the same sums), darkened edges and moving grain as layers on top.
+ */
+function applyLook() {
+  const look = footageLook();
+  const filter = [look.bw ? 'grayscale(1)' : '', look.contrast ? 'contrast(1.35) brightness(0.9)' : '']
+    .filter(Boolean).join(' ');
+  $('footage').style.filter = filter;
+  $('graded').style.filter = filter;
+  show($('footage-vignette'), look.vignette);
+  const grain = $('footage-grain');
+  show(grain, look.grain);
+  if (look.grain && !grain.style.backgroundImage) grain.style.backgroundImage = grainTile();
+  clearInterval(grainTimer);
+  if (look.grain) {
+    grainTimer = setInterval(() => {                 // a new grain every couple of frames
+      grain.style.backgroundPosition = `${Math.random() * 256}px ${Math.random() * 256}px`;
+    }, 80);
+  }
+}
+
 /** Clip i's framing: cx/cy 0..1 (left/top to right/bottom), zoom 1..2. */
 function framingOf(i) {
   const f = state.framing[i];
@@ -1132,7 +1184,7 @@ function showFootage(rough = false) {
   $('stage').classList.toggle('is-footage', Boolean(at));
   show($('framing-row'), Boolean(at));
   show($('framing-hint'), Boolean(at));
-  if (at) applyFraming();
+  if (at) { applyFraming(); applyLook(); } else clearInterval(grainTimer);
   updateGrade(at);
   if (!at) { el.pause(); return; }
   $('player').pause();
@@ -1548,6 +1600,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('footage-btn').addEventListener('click', findFootage);
   $('lut-on').addEventListener('change', () => showFootage());
+  for (const k of LOOK) $(`look-${k}`).addEventListener('change', () => { save(); applyLook(); });
   $('footage-folder').addEventListener('keydown', (e) => { if (e.key === 'Enter') findFootage(); });
   $('preview-btn').addEventListener('click', () => startJob('preview'));
   $('export-btn').addEventListener('click', () => startJob('export'));

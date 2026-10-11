@@ -27,8 +27,11 @@ Step 3 is split into four parts, built in this order:
   per-clip framing (drag the footage, scroll or slider to zoom up to 2x); Listen now plays
   a server-cut WAV of the clip (Safari couldn't seek deep into a 2-hour MP3: no sound, and
   the footage looped half a second chasing the stuck position).
-- **Next: the picture look for footage (Dom's call: before the graphics).** Options to
-  decide: black-and-white Dive In style vs colour, grain, contrast, etc.
+- Done 11 Oct: the footage look. Five switches (all on by default): black and white,
+  contrast, grain, darkened edges, ghost (jumps on the hits, as on photo clips). Drawn per
+  frame in Python with the photo clips' own maths (`app/divein/footage_look.py`); about
+  1x real time to export. The live preview approximates it with CSS (no ghost).
+  Possible follow-up: the red-lit October room goes quite dark in black and white.
 - Then: overlays (tape, name, rings) on footage (Step 4).
 
 ## Step 1 results (Tom)

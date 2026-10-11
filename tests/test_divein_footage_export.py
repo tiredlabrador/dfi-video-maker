@@ -111,6 +111,9 @@ def found(server, shoot, folder="Camera"):
     return token
 
 
+PLAIN = {"bw": False, "contrast": False, "grain": False, "vignette": False, "ghost": False}
+
+
 def design(token, **kw):
     d = {"audio": token, "artist": "Artist", "episode": "02.01", "starts": [27.0],
          "clip_seconds": 6, "sources": ["video"], "overrides": {}}
@@ -233,7 +236,7 @@ def middle_colour(clip):
 def test_flat_footage_gets_the_colour_correction(server, shoot, tmp_path):
     server.divein.lut_path = str(red_lut(tmp_path / "red.cube"))
     token = found(server, shoot, folder="Flat")
-    _, job = call(server, "/api/divein/export", design(token))
+    _, job = call(server, "/api/divein/export", design(token, footage_look=PLAIN))
     job = finished(server, job["id"])
     clip = tmp_path / "clip.mp4"
     clip.write_bytes(download(server, job, ".mp4"))
@@ -244,7 +247,7 @@ def test_flat_footage_gets_the_colour_correction(server, shoot, tmp_path):
 def test_colour_correction_can_be_turned_off(server, shoot, tmp_path):
     server.divein.lut_path = str(red_lut(tmp_path / "red.cube"))
     token = found(server, shoot, folder="Flat")
-    _, job = call(server, "/api/divein/export", design(token, lut=False))
+    _, job = call(server, "/api/divein/export", design(token, lut=False, footage_look=PLAIN))
     job = finished(server, job["id"])
     clip = tmp_path / "clip.mp4"
     clip.write_bytes(download(server, job, ".mp4"))
@@ -254,7 +257,7 @@ def test_colour_correction_can_be_turned_off(server, shoot, tmp_path):
 def test_normal_footage_is_left_as_filmed(server, shoot, tmp_path):
     server.divein.lut_path = str(red_lut(tmp_path / "red.cube"))
     token = found(server, shoot)
-    _, job = call(server, "/api/divein/export", design(token))
+    _, job = call(server, "/api/divein/export", design(token, footage_look=PLAIN))
     job = finished(server, job["id"])
     clip = tmp_path / "clip.mp4"
     clip.write_bytes(download(server, job, ".mp4"))
@@ -384,7 +387,7 @@ def brightness(server, job, tmp_path):
 def test_footage_can_be_framed_further_left_or_right(server, stripes, tmp_path, cx, light):
     token = found(server, stripes)
     _, job = call(server, "/api/divein/export",
-                  design(token, footage_crops=[{"cx": cx, "cy": 0.5, "zoom": 1}]))
+                  design(token, footage_look=PLAIN, footage_crops=[{"cx": cx, "cy": 0.5, "zoom": 1}]))
     job = finished(server, job["id"])
     assert job["status"] == "done", job.get("error")
     level = brightness(server, job, tmp_path)
@@ -396,7 +399,7 @@ def test_zoomed_in_footage_can_be_framed_higher_or_lower(server, stripes, tmp_pa
     """Zoomed in 2x on the middle third: its top half is grey, its bottom half nearly black."""
     token = found(server, stripes)
     _, job = call(server, "/api/divein/export",
-                  design(token, footage_crops=[{"cx": 0.5, "cy": cy, "zoom": 2}]))
+                  design(token, footage_look=PLAIN, footage_crops=[{"cx": 0.5, "cy": cy, "zoom": 2}]))
     job = finished(server, job["id"])
     low, high = level
     assert low < brightness(server, job, tmp_path) < high
@@ -408,3 +411,34 @@ def test_a_strange_framing_is_kept_within_bounds_not_refused(server, stripes, tm
                   design(token, footage_crops=[{"cx": -3, "cy": "x", "zoom": 50}]))
     job = finished(server, job["id"])
     assert job["status"] == "done", job.get("error")
+
+
+
+# ── the look ─────────────────────────────────────────────────────────────
+def test_footage_gets_the_dive_in_look_by_default(server, stripes, tmp_path):
+    """Black and white with grain: grey everywhere, and no two frames alike."""
+    token = found(server, stripes)
+    _, job = call(server, "/api/divein/export", design(token))
+    job = finished(server, job["id"])
+    assert job["status"] == "done", job.get("error")
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(download(server, job, ".mp4"))
+    # Full size (shrinking would average the grain away), the middle 200x200.
+    frames = subprocess.run(["ffmpeg", "-v", "error", "-i", str(clip), "-frames:v", "3",
+                             "-vf", "crop=200:200", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
+                            capture_output=True, check=True).stdout
+    rgb = np.frombuffer(frames, np.uint8).reshape(3, 200, 200, 3).astype(int)
+    assert np.abs(rgb[..., 0] - rgb[..., 1]).mean() < 3        # grey
+    assert np.abs(rgb[0] - rgb[2]).mean() > 1                   # grain changes
+
+
+def test_the_look_keeps_the_sync(server, shoot, tmp_path):
+    token = found(server, shoot)
+    _, job = call(server, "/api/divein/export", design(token))
+    job = finished(server, job["id"])
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(download(server, job, ".mp4"))
+    flash, click = flash_and_click(clip, tmp_path)
+    assert abs(flash - click) <= 1 / FPS
+    assert job["sync"][0]["in_sync"]
+    assert float(probe(clip)["format"]["duration"]) == pytest.approx(6, abs=0.1)

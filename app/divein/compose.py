@@ -205,6 +205,47 @@ def _blend(out: np.ndarray, tile: Image.Image, pos) -> None:
     out[y0:y1, x0:x1] = np.clip(np.round(t[..., :3] * a + region * (1 - a)), 0, 255)
 
 
+def vignette_mask(v: dict, W: int, H: int) -> np.ndarray:
+    """Darkened edges, as a multiplier per pixel (1 = untouched)."""
+    if not v["enabled"]:
+        return np.ones((H, W), dtype=np.float32)
+    cx, cy = v["centre_x"] * W, v["centre_y"] * H
+    # Like CSS "ellipse farthest-corner": the ellipse reaches the far corner.
+    rx = max(cx, W - cx) * math.sqrt(2)
+    ry = max(cy, H - cy) * math.sqrt(2)
+    y, x = np.mgrid[0:H, 0:W].astype(np.float32)
+    d = np.hypot((x - cx) / rx, (y - cy) / ry)
+    ramp = np.clip((d - v["inner"]) / max(1.0 - v["inner"], 1e-6), 0.0, 1.0)
+    return (1.0 - ramp * v["edge_alpha"]).astype(np.float32)
+
+
+def grain_index(gr: dict, episode: str, frame: int, seq: list[int]) -> int:
+    """
+    Which grain variation a frame uses. Changes every `every_frames`.
+
+    Each step moves to a different variation (a seeded random step of at
+    least one), so the grain can never hold for longer than it should. The
+    sequence (`seq`, extended in place) is built from the start, so it's the
+    same whatever order frames are asked for in.
+    """
+    pool = max(2, int(gr["pool"]))
+    pair = frame // max(1, int(gr["every_frames"]))
+    while len(seq) <= pair:
+        p = len(seq)
+        if p == 0:
+            seq.append(seed_for(episode, "grain-order-0") % pool)
+        else:
+            step = 1 + seed_for(episode, f"grain-order-{p}") % (pool - 1)
+            seq.append((seq[-1] + step) % pool)
+    return seq[pair]
+
+
+def grain_frame(gr: dict, episode: str, tag: str, W: int, H: int) -> np.ndarray:
+    """One grain variation, as 8-bit (a quarter of the memory; noise needs no more)."""
+    noise = rng_for(episode, tag).normal(128.0, gr["sd"], (H, W))
+    return np.clip(np.round(noise), 0, 255).astype(np.uint8)
+
+
 def _split_into_pieces(overlay: Image.Image):
     """
     Cut a mostly-empty full-canvas layer into the strips that hold anything
@@ -277,17 +318,7 @@ class Scene:
         self._ghost = np.asarray(ghost_img, dtype=np.float32) / 255.0
 
     def _make_vignette(self) -> np.ndarray:
-        v = self.cfg["vignette"]
-        if not v["enabled"]:
-            return np.ones((self.H, self.W), dtype=np.float32)
-        cx, cy = v["centre_x"] * self.W, v["centre_y"] * self.H
-        # Like CSS "ellipse farthest-corner": the ellipse reaches the far corner.
-        rx = max(cx, self.W - cx) * math.sqrt(2)
-        ry = max(cy, self.H - cy) * math.sqrt(2)
-        y, x = np.mgrid[0:self.H, 0:self.W].astype(np.float32)
-        d = np.hypot((x - cx) / rx, (y - cy) / ry)
-        ramp = np.clip((d - v["inner"]) / max(1.0 - v["inner"], 1e-6), 0.0, 1.0)
-        return (1.0 - ramp * v["edge_alpha"]).astype(np.float32)
+        return vignette_mask(self.cfg["vignette"], self.W, self.H)
 
     def _tape_centre_y(self) -> float:
         return self.cfg["tape"]["centre_y"] if self.fmt == "portrait" \
@@ -356,34 +387,12 @@ class Scene:
 
     # ── grain ────────────────────────────────────────────────────────────
     def grain_index(self, frame: int) -> int:
-        """
-        Which grain variation a frame uses. Changes every `every_frames`.
-
-        Each step moves to a different variation (a seeded random step of at
-        least one), so the grain can never hold for longer than it should. The
-        sequence is built from the start, so it's the same whatever order frames
-        are asked for in.
-        """
-        gr = self.cfg["grain"]
-        pool = max(2, int(gr["pool"]))
-        pair = frame // max(1, int(gr["every_frames"]))
-        seq = self._grain_sequence
-        while len(seq) <= pair:
-            p = len(seq)
-            if p == 0:
-                seq.append(seed_for(self.episode, "grain-order-0") % pool)
-            else:
-                step = 1 + seed_for(self.episode, f"grain-order-{p}") % (pool - 1)
-                seq.append((seq[-1] + step) % pool)
-        return seq[pair]
+        return grain_index(self.cfg["grain"], self.episode, frame, self._grain_sequence)
 
     def _grain(self, k: int) -> np.ndarray:
-        # Kept as 8-bit (a quarter of the memory); noise doesn't need more.
         if k not in self._grain_cache:
-            gr = self.cfg["grain"]
-            rng = rng_for(self.episode, f"grain-{self.fmt}-{k}")
-            noise = rng.normal(128.0, gr["sd"], (self.H, self.W))
-            self._grain_cache[k] = np.clip(np.round(noise), 0, 255).astype(np.uint8)
+            self._grain_cache[k] = grain_frame(self.cfg["grain"], self.episode,
+                                               f"grain-{self.fmt}-{k}", self.W, self.H)
         return self._grain_cache[k].astype(np.float32) / 255.0
 
     # ── composition ──────────────────────────────────────────────────────
