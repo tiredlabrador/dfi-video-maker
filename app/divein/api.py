@@ -19,6 +19,7 @@ import re
 import subprocess
 import tempfile
 import threading
+import time
 import traceback
 from collections import OrderedDict
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -50,17 +51,26 @@ def tidy_uploads(folder: str, max_bytes: int = UPLOADS_BYTES) -> None:
     kept = []
     for name in os.listdir(folder):
         path = os.path.join(folder, name)
-        if not os.path.isfile(path):
-            continue
-        if name.endswith(".part"):
-            os.remove(path)
-        else:
-            kept.append((os.path.getmtime(path), os.path.getsize(path), path))
+        try:
+            if not os.path.isfile(path):
+                continue
+            modified = os.path.getmtime(path)
+            if name.endswith(".part"):
+                # Only stale ones: another copy of the app may be uploading now.
+                if time.time() - modified > 86400:
+                    os.remove(path)
+            else:
+                kept.append((modified, os.path.getsize(path), path))
+        except FileNotFoundError:
+            continue                                 # gone meanwhile: fine
     total = sum(size for _, size, _ in kept)
     for _, size, path in sorted(kept):
         if total <= max_bytes:
             break
-        os.remove(path)
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
         total -= size
 
 
@@ -165,7 +175,7 @@ class DiveInService:
             if method == "GET" and path == "/api/divein/photo":
                 token = parse_qs(urlparse(h.path).query).get("token", [""])[0]
                 photo = self._resolve(token, "photo")
-                kinds = {".png": "image/png", ".webp": "image/webp", ".heic": "image/heic"}
+                kinds = {".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
                 kind = kinds.get(os.path.splitext(photo)[1].lower(), "image/jpeg")
                 return h._send_file(photo, kind, "photo")
             if method == "GET" and path == "/api/divein/excerpt":
@@ -247,21 +257,22 @@ class DiveInService:
                 raise BadRequest("The upload was cut short.")
             token = digest.hexdigest()[:32] + ext
             final = os.path.join(self.uploads, token)
+            # Checked before it's kept: a refused file mustn't linger on disk.
+            info = {"token": token, "kind": kind, "name": os.path.basename(name)}
+            if kind == "photo":
+                try:
+                    photo = load_photo(tmp)
+                except Exception:                  # noqa: BLE001
+                    raise BadRequest("That photo couldn't be opened. JPG or PNG works; "
+                                     "iPhone HEIC photos need exporting as JPG first.")
+                info.update(width=photo.width, height=photo.height)
+            else:
+                info["duration"] = self._duration(tmp)
             os.replace(tmp, final)
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
-
-        info = {"token": token, "kind": kind, "name": os.path.basename(name)}
-        if kind == "photo":
-            try:
-                photo = self._photo(token)
-            except Exception:                      # noqa: BLE001
-                raise BadRequest("That photo couldn't be opened. JPG or PNG works; "
-                                 "iPhone HEIC photos need exporting as JPG first.")
-            info.update(width=photo.width, height=photo.height)
-        else:
-            info["duration"] = self._duration(final)
+        if kind == "audio":
             self._durations[token] = info["duration"]
         return info
 
@@ -293,7 +304,8 @@ class DiveInService:
         return path
 
     def _photo(self, token):
-        return self._photos.get_or(token, lambda: load_photo(self._resolve(token, "photo")))
+        path = self._resolve(token, "photo")             # also marks it as in use
+        return self._photos.get_or(token, lambda: load_photo(path))
 
     # ── building a design from a request ─────────────────────────────────
     def _read_json(self, h) -> dict:

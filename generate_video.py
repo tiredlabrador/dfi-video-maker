@@ -197,15 +197,17 @@ def extract_embedded_artwork(audio_path: str):
                 front = next((p for p in apics if p.type == 3), apics[0])
                 data = front.data
 
-    else:
-        raise RenderError(f"Unsupported audio type: {ext}")
+    # Any other audio ffmpeg can read: no cover we know how to find, so the
+    # render falls back to the DFI artwork, exactly as the page shows.
 
     if not data:
         return None
     try:
         return Image.open(io.BytesIO(data)).convert("RGBA")
-    except Exception as exc:
-        raise RenderError(f"Embedded artwork could not be decoded as an image: {exc}")
+    except Exception:
+        # A broken cover (it happens with rips): the page shows the fallback
+        # design for these, so the video uses it too.
+        return None
 
 
 # Fonts we'll try, in order, when no brand font is configured. First one that
@@ -676,6 +678,14 @@ def read_audio_tags(audio_path: str):
                     value = tags.get(field) or tags.get(field.upper())
                     if value:
                         result[field] = str(value[0] if isinstance(value, list) else value)
+            if not (result["title"] or result["artist"]):
+                # WAV and AIFF keep an ID3 block inside, which "easy" doesn't read.
+                id3 = getattr(mutagen.File(audio_path), "tags", None)
+                if id3 is not None and hasattr(id3, "getall"):
+                    for frame, field in (("TIT2", "title"), ("TPE1", "artist")):
+                        found = id3.getall(frame)
+                        if found and found[0].text:
+                            result[field] = str(found[0].text[0])
     except Exception:
         pass                      # no tags, or unreadable — the caller copes
     return result

@@ -617,9 +617,10 @@ def test_only_uploaded_photos_can_be_fetched(server, token):
     assert caught.value.code in (400, 404)
 
 
-def test_uploads_outlive_a_restart_of_the_app():
+def test_uploads_outlive_a_restart_of_the_app(tmp_path, monkeypatch):
     """The app's scratch folder is wiped on every start: a reload must still find the mix."""
     import os
+    monkeypatch.setenv("HOME", str(tmp_path))       # never tidy the real caches from a test
     srv = create_server(host="127.0.0.1", port=0)
     try:
         uploads = srv.divein.uploads
@@ -639,10 +640,34 @@ def test_old_uploads_are_cleared_to_keep_the_folder_in_bounds(tmp_path):
     from app.divein.api import tidy_uploads
     folder = tmp_path / "uploads"
     folder.mkdir()
-    (folder / "half.part").write_bytes(b"x" * 10)
+    stale = folder / "stale.part"                # left by an app that was quit mid-upload
+    stale.write_bytes(b"x" * 10)
+    os.utime(stale, (clock.time() - 3 * 86400, clock.time() - 3 * 86400))
+    (folder / "now.part").write_bytes(b"x" * 10)  # another copy of the app, uploading now
     for i, age in enumerate([300, 200, 100]):
         f = folder / f"{i}.mp3"
         f.write_bytes(b"x" * 1000)
         os.utime(f, (clock.time() - age, clock.time() - age))
     tidy_uploads(str(folder), max_bytes=2500)
-    assert sorted(os.listdir(folder)) == ["1.mp3", "2.mp3"]
+    assert sorted(os.listdir(folder)) == ["1.mp3", "2.mp3", "now.part"]
+
+
+def test_the_photo_in_use_counts_as_used_so_it_is_kept(server, media):
+    """Tidying drops the longest-unused files first: the photo on screen mustn't be one."""
+    import os
+    import time as clock
+    _, photo = media
+    token = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    post_json(server, "/api/divein/still", design(token), raw=True).read()   # cached now
+    path = os.path.join(server.divein.uploads, token)
+    os.utime(path, (clock.time() - 86400, clock.time() - 86400))
+    post_json(server, "/api/divein/still", design(token), raw=True).read()   # used again
+    assert clock.time() - os.path.getmtime(path) < 60
+
+
+def test_a_refused_upload_does_not_stay_on_disk(server):
+    import os
+    before = set(os.listdir(server.divein.uploads))
+    with pytest.raises(urllib.error.HTTPError):
+        raw_upload(server, "photo", "not-a-photo.jpg", b"this is not an image" * 100)
+    assert set(os.listdir(server.divein.uploads)) == before

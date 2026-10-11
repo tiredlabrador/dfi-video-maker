@@ -464,8 +464,9 @@ def test_a_whole_huge_file_still_arrives_complete_when_asked_for_whole(server, h
     assert status == 200 and len(body) == path.stat().st_size and body.endswith(b"tail")
 
 
-def test_saved_camera_sound_outlives_a_restart_of_the_app():
+def test_saved_camera_sound_outlives_a_restart_of_the_app(tmp_path, monkeypatch):
     """The app's own scratch folder is wiped on every start; this mustn't be."""
+    monkeypatch.setenv("HOME", str(tmp_path))       # never tidy the real caches from a test
     srv = create_server(host="127.0.0.1", port=0)
     try:
         cache = srv.divein.footage_cache
@@ -544,13 +545,16 @@ def test_leftover_half_reads_are_cleared_and_the_saved_sound_is_kept_in_bounds(t
     from app.divein.footage import tidy_cache
     cache = tmp_path / "cache"
     cache.mkdir()
-    (cache / "abc.part").write_bytes(b"x" * 100)
+    stale = cache / "abc.part"                                  # quit mid-read, days ago
+    stale.write_bytes(b"x" * 100)
+    os.utime(stale, (time.time() - 3 * 86400, time.time() - 3 * 86400))
+    (cache / "now.part").write_bytes(b"x" * 100)                # another copy, reading now
     for i, age in enumerate([300, 200, 100]):                 # seconds ago
         f = cache / f"{i}.f32"
         f.write_bytes(b"x" * 1000)
         os.utime(f, (time.time() - age, time.time() - age))
     tidy_cache(str(cache), max_bytes=2500)
-    assert sorted(os.listdir(cache)) == ["1.f32", "2.f32"]     # the oldest went
+    assert sorted(os.listdir(cache)) == ["1.f32", "2.f32", "now.part"]   # the oldest went
 
 
 # ── D-Log footage ────────────────────────────────────────────────────────

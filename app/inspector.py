@@ -21,7 +21,7 @@ def _duration_label(seconds: float) -> str:
 
 
 def inspect_audio(path: str, has_override_artwork: bool = False,
-                  fallback_available: bool = True) -> dict:
+                  fallback_available: bool = True, fallback_path: str | None = None) -> dict:
     """
     Report what we can learn about one audio file.
 
@@ -81,8 +81,15 @@ def inspect_audio(path: str, has_override_artwork: bool = False,
             result["has_artwork"] = True
             result["artwork_source"] = "embedded"
             result["artwork_preview"] = _thumbnail_data_url(embedded)
-        elif fallback_available:
+        elif fallback_available or fallback_path:
             result["artwork_source"] = "fallback"
+            if fallback_path:                       # show the design it will get
+                try:
+                    from PIL import Image
+                    with Image.open(fallback_path) as fallback:
+                        result["artwork_preview"] = _thumbnail_data_url(fallback)
+                except Exception:                   # noqa: BLE001
+                    pass
         else:
             result["artwork_source"] = "none"
 

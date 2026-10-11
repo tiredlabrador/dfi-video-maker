@@ -21,6 +21,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 
 import numpy as np
 
@@ -159,15 +160,24 @@ def tidy_cache(cache_dir: str, max_bytes: int = CACHE_BYTES) -> None:
     saved = []
     for name in os.listdir(cache_dir):
         path = os.path.join(cache_dir, name)
-        if name.endswith(".part"):
-            os.remove(path)
-        elif name.endswith(".f32"):
-            saved.append((os.path.getmtime(path), os.path.getsize(path), path))
+        try:
+            modified = os.path.getmtime(path)
+            if name.endswith(".part"):
+                # Only stale ones: another copy of the app may be reading now.
+                if time.time() - modified > 86400:
+                    os.remove(path)
+            elif name.endswith(".f32"):
+                saved.append((modified, os.path.getsize(path), path))
+        except FileNotFoundError:
+            continue
     total = sum(size for _, size, _ in saved)
     for _, size, path in sorted(saved):
         if total <= max_bytes:
             break
-        os.remove(path)
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
         total -= size
 
 

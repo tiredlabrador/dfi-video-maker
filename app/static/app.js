@@ -112,10 +112,14 @@ function addFiles(files) {
 
 /** Read the track's tags and artwork (and keep a copy on the server to render from). */
 async function inspect(track) {
-  const form = new FormData();
-  form.append('audio', track.file);
   try {
-    const info = await postForm('/api/inspect', form);
+    // Sent as the whole body, straight to disk: a long 24-bit WAV is fine.
+    const response = await fetch('/api/inspect-file', {
+      method: 'POST', body: track.file,
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(track.name) },
+    });
+    const info = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(info.error || `Request failed (${response.status}).`);
     track.token = info.upload_token;
     if (info.track) track.title = info.track;
     if (info.artist) track.artist = info.artist;

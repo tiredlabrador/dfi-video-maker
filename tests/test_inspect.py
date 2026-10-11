@@ -110,3 +110,41 @@ def test_a_file_that_is_not_audio_at_all_is_reported_not_crashed(server):
                                  files={"audio": ("notmusic.mp3", b"NOT AUDIO")}))
     assert result["readable"] is False
     assert result["error"]
+
+
+def test_a_track_without_cover_shows_the_fallback_design_it_will_get(tmp_path):
+    """The page's thumbnail should be what the video will actually use."""
+    import generate_video as gv
+    from PIL import Image
+    fallback = tmp_path / "fallback.png"
+    Image.new("RGB", (100, 100), (250, 220, 0)).save(fallback)
+    audio = tmp_path / "plain.wav"
+    gv.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=duration=2", str(audio)], "wav")
+    from app.inspector import inspect_audio
+    result = inspect_audio(str(audio), fallback_path=str(fallback))
+    assert result["artwork_source"] == "fallback"
+    assert result["artwork_preview"].startswith("data:image/")
+
+
+def test_a_big_track_can_be_sent_straight_to_disk_for_reading(tmp_path, monkeypatch):
+    """A 7-minute 24-bit WAV is over 100MB: too big to hold in memory several times over."""
+    import app.server as server_module
+    from app.server import create_server
+    srv = create_server(host="127.0.0.1", port=0, work_dir=str(tmp_path))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        monkeypatch.setattr(server_module, "MAX_UPLOAD_BYTES", 1024 * 1024)   # pretend it's big
+        audio = tmp_path / "long.wav"
+        gv.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=duration=20",
+                "-ac", "2", "-ar", "48000", str(audio)], "wav")
+        assert audio.stat().st_size > 1024 * 1024
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{srv.server_address[1]}/api/inspect-file",
+            data=audio.read_bytes(), method="POST",
+            headers={"Content-Type": "application/octet-stream", "X-Filename": "Long%20One.wav"})
+        info = json.load(urllib.request.urlopen(req, timeout=60))
+        assert info["readable"] and info["duration"] == pytest.approx(20, abs=0.5)
+        assert info["upload_token"].endswith(".wav")
+    finally:
+        srv.shutdown()
+        srv.server_close()

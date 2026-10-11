@@ -240,6 +240,7 @@ async function restoreSession() {
     const url = `/api/divein/photo?token=${encodeURIComponent(saved.photo.token)}`;
     const photo = await fetch(url).catch(() => null);
     if (photo && photo.ok) await photoChosen(saved.photo, url);
+    else notify('The photo from last time is gone: choose it again.', 'warn');
   }
   notify('Picked up where you left off.', 'ok');
 }

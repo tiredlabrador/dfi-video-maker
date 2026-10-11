@@ -12,11 +12,14 @@ uses, and there is no framework version to go stale.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import os
+import re
 import shutil
 import socketserver
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import unicodedata
@@ -37,6 +40,7 @@ REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # — which is why the cap is well above a normal track but nowhere near a
 # gigabyte. Real files are 5-50MB.
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024      # 100 MB
+MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024   # a track sent straight to disk: 2GB
 MAX_OPEN_RANGE = 16 * 1024 * 1024         # most sent for one "to the end" request
 
 
@@ -265,6 +269,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._start_render()
         if path == "/api/inspect":
             return self._inspect()
+        if path == "/api/inspect-file":
+            return self._inspect_file()
         if path == "/api/upload":
             return self._upload()
         if path == "/api/batch":
@@ -302,13 +308,59 @@ class _Handler(BaseHTTPRequestHandler):
         service: RenderService = self.server.render_service
         path = service.save_upload(files["audio"].filename,
                                    files["audio"].content)
+        fallback = self.server.make_config().fallback_path
         result = inspect_audio(
             path,
             has_override_artwork="artwork" in files,
-            fallback_available=self.server.make_config().fallback_path is not None,
+            fallback_available=fallback is not None,
+            fallback_path=fallback,
         )
         # Hand back the stored path so a following render can reuse the upload
         # instead of sending the same 10MB up the pipe a second time.
+        result["upload_token"] = os.path.basename(path)
+        return self._json(200, result)
+
+    def _inspect_file(self) -> None:
+        """
+        The same as /api/inspect, for one track sent as the whole request body.
+
+        Written to disk as it arrives rather than held in memory, so a long
+        24-bit WAV (well over 100MB) is fine.
+        """
+        length = self._content_length()
+        if length <= 0:
+            return self._error(400, "No audio file was sent.")
+        if length > MAX_FILE_BYTES:
+            self._drain_body()
+            return self._error(413, "That file is over 2GB.")
+        service: RenderService = self.server.render_service
+        name = unquote(self.headers.get("X-Filename", "")) or "track"
+        _, extension = os.path.splitext(os.path.basename(name))
+        extension = re.sub(r"[^A-Za-z0-9.]", "", extension)[:12]
+        digest = hashlib.sha256()
+        handle, partial = tempfile.mkstemp(dir=service.uploads_dir, suffix=".part")
+        try:
+            with os.fdopen(handle, "wb") as out:
+                remaining = length
+                while remaining > 0:
+                    chunk = self.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    digest.update(chunk)
+                    remaining -= len(chunk)
+            self._body_read = True
+            if remaining:
+                return self._error(400, "The upload was cut short.")
+            # Named by its contents, as save_upload does: the same file twice is kept once.
+            path = os.path.join(service.uploads_dir, digest.hexdigest()[:32] + extension)
+            os.replace(partial, path)
+        finally:
+            if os.path.exists(partial):
+                os.remove(partial)
+        fallback = self.server.make_config().fallback_path
+        result = inspect_audio(path, fallback_available=fallback is not None,
+                               fallback_path=fallback)
         result["upload_token"] = os.path.basename(path)
         return self._json(200, result)
 
