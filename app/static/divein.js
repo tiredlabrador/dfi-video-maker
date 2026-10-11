@@ -803,21 +803,51 @@ function toggleListen(i) {
   // Just this clip's stretch, cut exactly by the app: browsers jump into a
   // long MP3 slowly (Safari) and only roughly, which would put footage out of step.
   state.listenFrom = state.starts[i];
+  state.heldForPicture = false;
   player.src = `/api/divein/excerpt?audio=${encodeURIComponent(state.audio.token)}`
     + `&start=${state.listenFrom}&seconds=${clipLength()}`;
-  player.play().catch(() => stopListening());
+  renderClips();
   const tick = () => {
     if (state.listening !== i) return;
-    if (player.paused || player.ended) { stopListening(); return; }
+    if (player.ended || (player.paused && !state.heldForPicture)) { stopListening(); return; }
     followListening();
     drawTimeline();
     requestAnimationFrame(tick);
   };
-  requestAnimationFrame(tick);
-  renderClips();
+  // Like a video player: start the sound only once the picture is ready to
+  // go from the clip's first frame too, so the two set off together.
+  startTogether(i).then((ok) => {
+    if (!ok || state.listening !== i) return;
+    player.play().then(() => requestAnimationFrame(tick)).catch(() => stopListening());
+  });
+}
+
+/** Get the footage (if this clip shows it) and the sound both ready at the clip's start. */
+async function startTogether(i) {
+  const player = $('listen'), el = $('footage');
+  const at = $('stage').classList.contains('is-footage') ? footageAt(state.starts[i]) : null;
+  const ready = (media, needed) => new Promise((resolve) => {
+    if (media.readyState >= needed && !media.seeking) { resolve(); return; }
+    const done = () => { media.removeEventListener('canplay', done); media.removeEventListener('seeked', check); resolve(); };
+    const check = () => { if (media.readyState >= needed) done(); };
+    media.addEventListener('canplay', done);
+    media.addEventListener('seeked', check);
+    setTimeout(done, 8000);                         // never wait for ever
+  });
+  if (at) {
+    el.pause();
+    el.playbackRate = 1;
+    el.currentTime = at.time;
+    await ready(el, 3);
+    if (state.listening !== i) return false;
+    el.play().catch(() => {});
+  }
+  await ready(player, 3);
+  return state.listening === i;
 }
 
 function stopListening() {
+  state.heldForPicture = false;
   $('listen').pause();
   $('footage').playbackRate = 1;
   state.listening = null;
@@ -1243,23 +1273,28 @@ function followListening() {
   const el = $('footage');
   if (!$('stage').classList.contains('is-footage')) return;
   const player = $('listen');
-  // The sound isn't actually moving yet (still loading): hold the picture
-  // still rather than keep re-lining it up with a stuck position.
-  if (player.readyState < 3 || player.seeking) { el.pause(); return; }
   const at = footageAt(listenTime());
   if (!at) { el.pause(); return; }
-  const now = performance.now();
-  // A jump that's taken over two seconds has stalled (likely after the tab
-  // sat in the background): ask again rather than wait for ever.
-  const stalled = el.seeking && now - lastAlign > 2000;
-  const behind = at.time - el.currentTime;          // positive: the picture is late
-  if ((!el.seeking && Math.abs(behind) > 0.3 && now - lastAlign > 600) || stalled) {
-    el.currentTime = at.time;                       // well out: jump
-    lastAlign = now;
+  // The picture has stalled (loading more of a 17GB file): pause the sound
+  // until it's moving again. Jumping the picture to catch up only makes it
+  // load again, which is what made it loop.
+  if (el.readyState < 3 || el.seeking) {
+    if (!player.paused) { state.heldForPicture = true; player.pause(); }
+    return;
   }
-  // Slightly out: play a touch faster or slower until level. Smoother than
-  // jumping, which in a big camera file takes a moment and stutters.
-  el.playbackRate = Math.abs(behind) < 0.02 ? 1 : 1 + Math.max(-0.1, Math.min(0.1, behind * 2));
+  if (state.heldForPicture) {
+    state.heldForPicture = false;
+    player.play().catch(() => {});
+  }
+  const now = performance.now();
+  const behind = at.time - el.currentTime;          // positive: the picture is late
+  if (Math.abs(behind) > 1 && now - lastAlign > 3000) {
+    el.currentTime = at.time;                       // badly out (rare): one jump, then wait
+    lastAlign = now;
+    return;
+  }
+  // Slightly out: play a touch faster or slower until level.
+  el.playbackRate = Math.abs(behind) < 0.02 ? 1 : 1 + Math.max(-0.15, Math.min(0.15, behind * 2));
   if (el.paused) el.play().catch(() => {});
 }
 
