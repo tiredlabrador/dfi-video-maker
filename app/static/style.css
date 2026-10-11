@@ -195,7 +195,7 @@ details.more[open] summary::before { content: "▾ "; }
 .toast.ok { border-left-color: var(--ok); }
 .toast p { margin: 0; flex: 1; }
 .toast button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1rem; padding: 0 .1rem; line-height: 1; }
-@keyframes toast-in { from { transform: translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes toast-in { from { transform: translateY(6px); } to { transform: none; } }   /* no fade: never stuck see-through */
 
 /* ── Progress ────────────────────────────────────────────────────── */
 .progress-bar { height: 4px; background: var(--panel-3); border-radius: 999px; overflow: hidden; }

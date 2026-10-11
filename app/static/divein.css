@@ -21,7 +21,7 @@ body.divein { display: flex; flex-direction: column; height: 100vh; overflow: hi
 /* ── Style panel bits ────────────────────────────────────────────── */
 .slider-row { display: flex; align-items: center; gap: .6rem; margin-top: .8rem; }
 .slider-row .label { margin: 0; }
-.slider-row input[type=range] { flex: 1; }
+.slider-row input[type=range] { flex: 1; min-width: 0; }
 .slider-row .value { min-width: 2.2rem; text-align: right; text-decoration: none; font-variant-numeric: tabular-nums; }
 .swatches { margin-bottom: .4rem; }
 .swatches button { display: grid; place-items: center; padding: .4rem; }

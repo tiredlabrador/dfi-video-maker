@@ -12,31 +12,41 @@ you work.
 
 A spinning record of the track's cover art, with the title and artist.
 
-1. Click **A whole batch** and drag in the audio files.
-2. Check the track and artist it filled in, set each clip start, and use the
-   arrows to put them in posting order.
-3. Press **Render the batch**, then **Download all**. Files are numbered `01`,
-   `02`… in posting order.
+1. Drag the audio files onto the page (MP3, FLAC, WAV, AIFF or M4A). One track
+   or a whole batch: it's the same list.
+2. Check each track's title and artist. Click the waveform where the 25-second
+   clip should start (or drag the yellow clip); ▶ plays it.
+3. Drag the ⠿ handle to put tracks in posting order: files are numbered `01`,
+   `02`… to match.
+4. **Preview** makes a quick small version; **Render** makes the real ones,
+   then **Download all**.
 
 Check the artwork before rendering: bootlegs sometimes have adverts or the wrong
-album baked in as cover art. **One track** lets you swap in different artwork.
+album baked in as cover art. Click a track's artwork to swap in another image.
 
 ## Dive In — the mix series
 
-A photo of the DJ, hazard tape with the episode number, and rings that move with
-the music. Makes a 4:5 video per clip plus a 1:1 JPG for SoundCloud.
+A 4:5 video per clip, made from the DJ's photo or the camera footage, plus a
+1:1 JPG for SoundCloud.
 
-1. **Photo** — drop it in (or paste it, or drop it on the preview). Drag the
-   preview to move it; scroll or pinch to zoom.
-2. **Details** — the artist's name and the episode, e.g. `02.01`.
-3. **The mix** — drop it in. Click on the mix's outline where each clip should
-   start; drag a clip to move it; **Listen** plays it.
-4. **Style** — the colour, and whether the rings follow the volume (the
-   default) or the kick drums.
-5. **Preview with sound** to check one, then **Export**, then **Download all**.
+1. **Mix**: drop it anywhere on the page.
+2. **Camera footage** (optional): paste the footage folder's location and press
+   **Find**. The white strip on the timeline shows what was filmed.
+3. **Photo** (optional): for photo clips and the JPG. **Details**: the artist's
+   name and the episode, e.g. `02.01`.
+4. **Clips**: click the timeline to move the playhead (the viewer shows that
+   moment), then **+ Clip** (or double-click) to add a clip there. Drag a clip
+   to move it. Each clip uses the footage or the photo: switch it above the
+   viewer. Drag the picture to frame it; scroll to zoom.
+5. **Style** on the right: the footage look and the graphics.
+6. **Preview clip** to check one with sound, then **Export**.
 
-If a name uses a letter the brand font doesn't have (Ł, Č, Ж and the like), the
-page warns you — it won't appear in the video.
+Keys: Space plays and pauses; ← → nudge the clip (Shift: 5 seconds); A adds a
+clip; Delete removes it; [ and ] jump between clips.
+
+The page remembers where you were, even after a restart. If a name uses a letter
+the brand font doesn't have (Ł, Č, Ж and the like), the page warns you: it won't
+appear in the video.
 
 ## If something goes wrong
 
