@@ -8,6 +8,8 @@ sizes are for a 1080-wide frame; smaller frames (previews) are scaled to match.
 """
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 from PIL import Image, ImageFilter
 
@@ -30,14 +32,17 @@ class FootageLook:
             if self.on["vignette"] else None
         self._grain_seq: list[int] = []
         self._grain_cache: dict[int, np.ndarray] = {}
+        self._grain_lock = threading.Lock()   # frames are drawn several at a time
 
     def _grain(self, f: int) -> np.ndarray:
         gr = self.cfg["grain"]
-        k = grain_index(gr, self.episode, f, self._grain_seq)
-        if k not in self._grain_cache:
-            self._grain_cache[k] = grain_frame(gr, self.episode, f"grain-footage-{k}",
-                                               self.W, self.H)
-        return self._grain_cache[k].astype(np.float32) / 255.0
+        with self._grain_lock:
+            k = grain_index(gr, self.episode, f, self._grain_seq)
+            if k not in self._grain_cache:
+                self._grain_cache[k] = grain_frame(gr, self.episode, f"grain-footage-{k}",
+                                                   self.W, self.H)
+            grain = self._grain_cache[k]
+        return grain.astype(np.float32) / 255.0
 
     def _twitch(self, f: int) -> tuple[float, float]:
         a = self.analysis

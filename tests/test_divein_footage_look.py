@@ -88,3 +88,16 @@ def test_the_same_frame_always_comes_out_the_same():
     """Preview and export, any machine: frame 12 is always frame 12."""
     frame = (np.random.default_rng(2).random((H, W, 3)) * 255).astype(np.uint8)
     assert np.array_equal(look(ALL).frame(12, frame), look(ALL).frame(12, frame))
+
+
+def test_frames_drawn_at_the_same_time_come_out_exactly_as_one_at_a_time():
+    """The export draws several frames at once for speed: it mustn't change a single pixel."""
+    from concurrent.futures import ThreadPoolExecutor
+    frames = [(np.random.default_rng(i).random((H, W, 3)) * 255).astype(np.uint8) for i in range(6)]
+    hits = {"twitch_x": np.r_[np.zeros(20), np.full(20, 5.0)], "twitch_y": np.zeros(40)}
+    serial = look(ALL, hits)
+    one_by_one = [serial.frame(f, frames[f % 6]) for f in range(40)]
+    parallel = look(ALL, hits)
+    with ThreadPoolExecutor(6) as pool:
+        together = list(pool.map(lambda f: parallel.frame(f, frames[f % 6]), range(39, -1, -1)))[::-1]
+    assert all(np.array_equal(a, b) for a, b in zip(one_by_one, together))

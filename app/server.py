@@ -451,6 +451,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "track": result.item.track,
                 "artist": result.item.artist,
                 "status": result.status,
+                "running": result.started and result.status == "pending",
                 "filename": result.filename,
                 "error": result.error,
                 "probe": result.probe or None,

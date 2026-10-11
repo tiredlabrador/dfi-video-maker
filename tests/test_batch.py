@@ -165,3 +165,31 @@ def test_the_zip_skips_tracks_that_failed(service, audio, artwork):
     results = render_batch(service, batch, tiny_cfg())
     archive = zipfile.ZipFile(io.BytesIO(zip_results(results)))
     assert len(archive.namelist()) == 1
+
+
+def test_tracks_render_several_at_once_but_keep_their_order(service, audio, artwork, monkeypatch):
+    """A batch of ten took a minute one by one; side by side it's much quicker."""
+    import threading
+    import time
+    running, most = 0, 0
+    lock = threading.Lock()
+    real = service.render
+
+    def slow_render(request, progress=None):
+        nonlocal running, most
+        with lock:
+            running += 1
+            most = max(most, running)
+        time.sleep(0.3)
+        try:
+            return real(request, progress)
+        finally:
+            with lock:
+                running -= 1
+    monkeypatch.setattr(service, "render", slow_render)
+    batch = items(audio, artwork, [("One", "A"), ("Two", "B"), ("Three", "C"), ("Four", "D")])
+    results = render_batch(service, batch, tiny_cfg())
+    assert most >= 2
+    assert [r.filename[:2] for r in results] == ["01", "02", "03", "04"]
+    assert [r.item.track for r in results] == ["One", "Two", "Three", "Four"]
+    assert all(r.status == "done" for r in results)

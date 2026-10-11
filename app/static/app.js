@@ -471,9 +471,9 @@ async function follow(jobId, tracks, preview) {
   const items = job.items || [];
   tracks.forEach((t, i) => {
     const item = items[i];
-    if (!item) { t.result = { status: 'pending', running: i === items.length }; return; }
+    if (!item) { t.result = { status: 'pending' }; return; }
     const was = t.result && t.result.status;
-    t.result = { ...item, preview, running: item.status === 'pending' };
+    t.result = { ...item, preview };
     if (item.status === 'done' && was !== 'done' && state.selected === t) showViewer();
   });
   for (const t of tracks) renderState(t);
