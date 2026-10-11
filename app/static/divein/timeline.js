@@ -29,11 +29,19 @@ function addClipAt(t) {
 
 function deleteClip(i) {
   if (i < 0 || i >= state.starts.length) return;
+  const removed = { i, start: state.starts[i], source: state.sources[i], framing: state.framing[i] };
   state.starts.splice(i, 1);
   state.sources.splice(i, 1);
   state.framing.splice(i, 1);
   if (state.selected >= i) state.selected = Math.max(0, state.selected - 1);
   startsChanged();
+  notify(`Clip ${i + 1} removed.`, 'ok', false, { label: 'Undo', run: () => {
+    state.starts.splice(removed.i, 0, removed.start);
+    state.sources.splice(removed.i, 0, removed.source);
+    state.framing.splice(removed.i, 0, removed.framing);
+    selectClip(removed.i);
+    startsChanged();
+  } });
 }
 
 /** Make clip `i` the one the clip controls act on, and go to its start. */
@@ -53,6 +61,7 @@ function startsChanged() {
   renderChips();
   drawTimeline();
   updateViewer();
+  refreshExport();
   saveSession();
 }
 

@@ -41,7 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!startsFromText()) setError('One of the start times can’t be read. Use mm:ss or h:mm:ss, separated by commas.');
   });
   $('clip-seconds').addEventListener('input', () => {
-    save(); renderChips(); drawTimeline(); updateViewer(); saveSession();
+    save(); renderChips(); drawTimeline(); updateViewer(); refreshExport(); saveSession();
   });
   $('twitch').addEventListener('change', () => designChanged(0));
   $('rings-on').addEventListener('change', () => { showMotionOptions(); designChanged(0); });

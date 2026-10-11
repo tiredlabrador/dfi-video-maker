@@ -27,6 +27,7 @@ const state = {
   overrides: {},
   defaults: null,
   polling: null,
+  squareWanted: true,     // make the 1:1 JPG (when there's a photo)
   // The clips
   starts: [],             // clip start times, in seconds
   sources: [],            // for each clip: 'auto' (footage if filmed), 'photo' or 'video'
@@ -61,10 +62,11 @@ const state = {
  * A message at the top right. Errors stay until closed; notes go by
  * themselves. The same message twice just stays up longer.
  */
-function notify(message, kind = 'error', sticky = kind === 'error') {
+function notify(message, kind = 'error', sticky = kind === 'error', action = null) {
   if (!message) return;
   const box = $('toasts');
   let toast = [...box.children].find((t) => t.dataset.text === message);
+  if (toast && action) { toast.remove(); toast = null; }   // a fresh one, with the new action
   if (!toast) {
     toast = document.createElement('div');
     toast.className = `toast ${kind}`;
@@ -77,7 +79,16 @@ function notify(message, kind = 'error', sticky = kind === 'error') {
     close.title = 'Close';
     close.textContent = '×';
     close.addEventListener('click', () => toast.remove());
-    toast.append(text, close);
+    toast.append(text);
+    if (action) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'toast-action';
+      button.textContent = action.label;
+      button.addEventListener('click', () => { toast.remove(); action.run(); });
+      toast.append(button);
+    }
+    toast.append(close);
     box.append(toast);
     while (box.children.length > 4) box.firstChild.remove();
   }

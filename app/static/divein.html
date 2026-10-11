@@ -53,7 +53,7 @@
     <section class="section">
       <div class="section-head"><h2>Camera footage</h2><span class="tag">optional</span></div>
       <div class="row">
-        <input type="text" class="input" id="footage-folder" placeholder="The footage folder’s location"
+        <input type="text" class="input" id="footage-folder" placeholder="The footage folder’s location" aria-label="Footage folder"
                autocomplete="off" spellcheck="false"
                title="In Finder, right-click the folder, hold Option, and choose Copy as Pathname">
         <button type="button" class="btn btn--small btn--ghost" id="footage-btn">Find</button>
@@ -133,6 +133,7 @@
       </div>
     </div>
     <audio id="listen" preload="auto" hidden></audio>
+    <audio id="listen-next" preload="auto" hidden></audio>
   </main>
 
   <!-- ══ Style ══════════════════════════════════════════════════════ -->
@@ -148,7 +149,7 @@
       </div>
       <div class="slider-row" title="Set on the footage as filmed, before the D-Log colour fix">
         <span class="label">Brightness</span>
-        <input type="range" id="look-brightness" min="-50" max="100" step="1" value="0">
+        <input type="range" id="look-brightness" min="-50" max="100" step="1" value="0" aria-label="Brightness">
         <button type="button" class="link value" id="look-brightness-label" title="Reset">0</button>
       </div>
     </section>

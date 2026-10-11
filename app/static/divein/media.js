@@ -6,18 +6,22 @@
 
 const SESSION = 'divein-session-v1';
 let chosenThisVisit = false;              // a choice you've made beats the last session
+let audioSeq = 0;                         // the latest mix chosen wins, however slow the others
 
 /* ── the mix ─────────────────────────────────────────────────────── */
 
 async function useAudio(file) {
   if (!file) return;
   chosenThisVisit = true;
+  const seq = ++audioSeq;
   $('audio-label').textContent = file.name;
   $('audio-hint').textContent = 'Copying…';
   let info;
   try {
     info = await upload('audio', file);
+    if (seq !== audioSeq) return;                   // another mix was chosen meanwhile
   } catch (error) {
+    if (seq !== audioSeq) return;
     $('audio-label').textContent = state.audio ? state.audio.name : 'Choose the mix';
     $('audio-hint').textContent = state.audio ? timecode(state.audio.duration) : 'or drop it anywhere';
     setError(error.message);
@@ -91,8 +95,9 @@ async function findFootage(quiet = false) {
     job = await (await postJSON('/api/divein/footage', { audio: token, folder })).json();
   } catch (error) {
     if (!quiet) setError(error.message);
-    status.textContent = '';
+    status.textContent = error.message;             // shown even when looked for quietly
     button.disabled = false;
+    refreshExport();
     return;
   }
   clearInterval(footagePolling);
@@ -108,8 +113,9 @@ async function findFootage(quiet = false) {
     button.disabled = false;
     if (!current) return;                 // a different mix was chosen meanwhile
     if (s.status === 'error') {
-      status.textContent = '';
+      status.textContent = s.error || 'Looking through the footage failed.';
       if (!quiet) setError(s.error || 'Looking through the footage failed.');
+      refreshExport();
       return;
     }
     state.footage = { audio: token, matches: s.footage.matches };
@@ -118,7 +124,7 @@ async function findFootage(quiet = false) {
     renderChips();                        // filmed clips now offer the footage
     drawTimeline();
     updateViewer();
-    if (!$('export-panel').hidden) renderExportList();
+    refreshExport();
   }, 400);
 }
 
@@ -152,12 +158,17 @@ async function usePhoto(file) {
 
 /** A photo is ready on the server: show it and set up its quick drafts. */
 async function photoChosen(info, url) {
+  if (state.photoURL && state.photoURL.startsWith('blob:') && state.photoURL !== url) {
+    URL.revokeObjectURL(state.photoURL);            // the old photo's copy in memory
+  }
+  state.photoURL = url;
   state.photo = { token: info.token, width: info.width, height: info.height, name: info.name };
   $('photo-label').textContent = info.name;
   $('photo-drop').classList.add('is-set');
   $('photo-thumb').innerHTML = `<img alt="" src="${url}">`;
   designChanged(0);
   updateViewer();
+  refreshExport();
   saveSession();
   const img = new Image();
   img.src = url;
@@ -190,6 +201,12 @@ function wireMedia() {
     e.preventDefault();
     depth = 0;
     $('stage').classList.remove('is-over');
+    const entry = e.dataTransfer?.items?.[0]?.webkitGetAsEntry?.();
+    if (entry && entry.isDirectory) {
+      notify('That’s a folder. For camera footage, paste its location under Camera footage '
+        + '(in Finder: right-click it, hold Option, Copy as Pathname).', 'warn');
+      return;
+    }
     useDroppedFile(e.dataTransfer?.files?.[0]);
   });
   document.addEventListener('paste', (e) => {           // paste a photo from anywhere...

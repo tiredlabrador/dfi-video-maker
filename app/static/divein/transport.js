@@ -8,7 +8,14 @@
  */
 'use strict';
 
-const PLAY_CHUNK = 45;                    // seconds of sound fetched at a time
+const PLAY_CHUNK = 60;                    // seconds of sound fetched at a time
+const AHEAD = 8;                          // start loading the next stretch this long before the end
+
+/* Two players take turns: one plays while the other loads what comes next,
+   so there's no pause every minute while the next stretch of sound arrives. */
+let active = 0;
+const sound = () => (active === 0 ? $('listen') : $('listen-next'));
+const spare = () => (active === 0 ? $('listen-next') : $('listen'));
 
 /** Move the playhead to `t`. While playing, playing carries on from there. */
 function seek(t, { rough = false, reveal = false } = {}) {
@@ -28,10 +35,16 @@ function setPlayIcon() {
 }
 
 let playToken = 0;
+let ticker = null;
 
 function excerptURL(from, seconds) {
   return `/api/divein/excerpt?audio=${encodeURIComponent(state.audio.token)}`
     + `&start=${from.toFixed(3)}&seconds=${seconds.toFixed(3)}`;
+}
+
+/** Where in the mix the sound has got to. */
+function listenTime() {
+  return (state.listenFrom || 0) + sound().currentTime;
 }
 
 async function play() {
@@ -40,15 +53,24 @@ async function play() {
   if (state.playhead >= duration() - 0.5) state.playhead = 0;
   state.playing = true;
   setPlayIcon();
+  updateViewer();                                   // the frame tools hide while playing
   await startPlaying();
+}
+
+function stopTicking() {
+  clearInterval(ticker);
+  ticker = null;
 }
 
 function pause() {
   playToken += 1;
+  stopTicking();
   const was = state.playing;
   state.playing = false;
   state.heldForPicture = false;
+  state.nextFrom = null;
   $('listen').pause();
+  $('listen-next').pause();
   $('footage').pause();
   $('footage').playbackRate = 1;
   setPlayIcon();
@@ -61,67 +83,98 @@ function togglePlay() {
 
 function restartPlaying() {
   playToken += 1;
+  stopTicking();
   $('listen').pause();
+  $('listen-next').pause();
   startPlaying();
 }
 
-/** Load the next stretch of sound from the playhead and set off with the picture. */
+/** Load sound from the playhead, get the picture ready too, then set off together. */
 async function startPlaying() {
   const token = ++playToken;
   const from = state.playhead;
   const seconds = Math.min(PLAY_CHUNK, duration() - from);
   if (seconds < 0.5) { pause(); return; }
-  const player = $('listen');
+  spare().removeAttribute('src');                   // whatever it had loaded is no use now
+  state.nextFrom = null;
   state.listenFrom = from;
   state.heldForPicture = false;
+  const player = sound();
   player.src = excerptURL(from, seconds);
   updateViewer();
   drawTimeline();
-  if (!(await startTogether(token))) return;
-  player.play().then(() => {
-    if (token === playToken) requestAnimationFrame(() => tick(token));
-  }).catch(() => { if (token === playToken) pause(); });
+  if (!(await bothReady(token))) return;
+  if (player.error) { notify('The sound couldn’t be loaded. Is the app still running?'); pause(); return; }
+  const footage = $('stage').classList.contains('is-footage') ? $('footage') : null;
+  try {
+    await Promise.all([player.play(), footage ? footage.play() : null]);
+  } catch {
+    if (token === playToken) pause();
+    return;
+  }
+  if (token !== playToken) return;
+  stopTicking();
+  // A timer rather than animation frames: it keeps going in a background tab.
+  ticker = setInterval(() => tick(token), 40);
 }
 
-/** Wait until the footage (if it's showing) and the sound are both ready to go. */
-async function startTogether(token) {
-  const player = $('listen'), el = $('footage');
-  const ready = (media, needed) => new Promise((resolve) => {
-    if (media.readyState >= needed && !media.seeking) { resolve(); return; }
+/** Resolve once `media` has enough loaded to play (or gave up, or 8s passed). */
+function whenReady(media) {
+  return new Promise((resolve) => {
+    if (media.readyState >= 3 && !media.seeking) { resolve(); return; }
     const done = () => {
-      media.removeEventListener('canplay', done);
-      media.removeEventListener('seeked', check);
+      for (const ev of ['canplay', 'seeked', 'error']) media.removeEventListener(ev, check);
+      clearTimeout(timer);
       resolve();
     };
-    const check = () => { if (media.readyState >= needed) done(); };
-    media.addEventListener('canplay', done);
-    media.addEventListener('seeked', check);
-    setTimeout(done, 8000);                         // never wait for ever
+    const check = (e) => { if (e.type === 'error' || media.readyState >= 3) done(); };
+    for (const ev of ['canplay', 'seeked', 'error']) media.addEventListener(ev, check);
+    const timer = setTimeout(done, 8000);           // never wait for ever
   });
+}
+
+/** The footage (if it's showing) at the right frame, and the sound, both ready to go. */
+async function bothReady(token) {
+  const el = $('footage');
   const v = viewerTarget();
+  const waits = [whenReady(sound())];
   if (v.at) {
     el.pause();
     el.playbackRate = 1;
     el.currentTime = v.at.time;
-    await ready(el, 3);
-    if (token !== playToken) return false;
-    el.play().catch(() => {});
+    waits.push(whenReady(el));
   }
-  await ready(player, 3);
+  await Promise.all(waits);
   return token === playToken;
 }
 
-/** Each frame while playing: move the playhead, keep the picture with the sound. */
+/** Every 40ms while playing: move the playhead, keep the picture with the sound. */
 function tick(token) {
-  if (token !== playToken || !state.playing) return;
-  const player = $('listen');
-  if (player.ended) {                               // this stretch is done: fetch the next
-    state.playhead = state.listenFrom + player.duration;
-    if (state.playhead < duration() - 0.5) startPlaying(); else pause();
+  if (token !== playToken || !state.playing) { if (token !== playToken) return; stopTicking(); return; }
+  const player = sound();
+  const chunkEnd = state.listenFrom + (Number.isFinite(player.duration) ? player.duration : PLAY_CHUNK);
+  // Nearly through this stretch: load the next in the other player.
+  if (state.nextFrom == null && Number.isFinite(player.duration)
+      && player.duration - player.currentTime < AHEAD && chunkEnd < duration() - 0.5) {
+    state.nextFrom = chunkEnd;
+    spare().src = excerptURL(chunkEnd, Math.min(PLAY_CHUNK, duration() - chunkEnd));
+    spare().load();
+  }
+  if (player.ended) {
+    if (state.nextFrom == null) {                   // the end of the mix
+      state.playhead = Math.min(duration(), chunkEnd);
+      pause();
+      return;
+    }
+    active = 1 - active;                            // over to the stretch already loaded
+    state.listenFrom = state.nextFrom;
+    state.nextFrom = null;
+    sound().currentTime = 0;
+    sound().play().catch(() => { if (token === playToken) pause(); });
     return;
   }
   if (player.paused && !state.heldForPicture) { pause(); return; }
-  state.playhead = state.listenFrom + player.currentTime;
+  state.playhead = listenTime();
   const before = state.viewing, v = viewerTarget();
   const changed = !before || v.clip !== before.clip || v.source !== before.source
     || Boolean(v.at) !== Boolean(before.at) || (v.at && before.at && v.at.video !== before.at.video);
@@ -132,8 +185,7 @@ function tick(token) {
     state.view.start = state.playhead - span * 0.05;
     clampView();
   }
-  drawTimeline();
-  requestAnimationFrame(() => tick(token));
+  if (!document.hidden) drawTimeline();
 }
 
 /**
@@ -144,10 +196,14 @@ let lastAlign = 0;
 
 function followPlayback() {
   const el = $('footage');
-  if (!$('stage').classList.contains('is-footage')) return;
-  const player = $('listen');
+  const player = sound();
   const at = footageAt(state.playhead);
-  if (!at) { el.pause(); return; }
+  // No footage on show (any more): the sound mustn't stay held for it.
+  if (!$('stage').classList.contains('is-footage') || !at) {
+    if (at === null || !$('stage').classList.contains('is-footage')) el.pause();
+    if (state.heldForPicture) { state.heldForPicture = false; player.play().catch(() => {}); }
+    return;
+  }
   if (el.readyState < 3 || el.seeking) {
     if (!player.paused) { state.heldForPicture = true; player.pause(); }
     return;
@@ -186,9 +242,16 @@ function wireRecovery() {
   el.addEventListener('loadeddata', () => { footageRetries = 0; });
   el.addEventListener('error', () => {
     if (!el.getAttribute('src')) return;
-    // 4 = this browser can't play the file at all: retrying won't help.
+    // 4 = the browser can't use what it got: the footage is gone (the app was
+    // restarted, or the drive unplugged), or this browser can't play it.
     if (el.error && el.error.code === 4) {
-      notify('This browser can’t play this footage. Try Safari.', 'error');
+      fetch(el.getAttribute('src'), { headers: { Range: 'bytes=0-0' } }).then((r) => {
+        if (r.ok) { notify('This browser can’t play this footage. Try Safari.', 'error'); return; }
+        state.footage = null;
+        updateViewer();
+        drawTimeline();
+        notify('The footage needs finding again: press Find (is the drive plugged in?).', 'warn');
+      }).catch(() => notify('The footage stopped loading. Is the app still running?', 'error'));
       return;
     }
     if (footageRetries >= 3) {
@@ -211,12 +274,22 @@ function wireRecovery() {
 function wireKeys() {
   document.addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.target.closest && e.target.closest('input, textarea, select')) return;
+    const target = e.target;
+    // Typing: every key is for the box. A focused switch, slider or button
+    // keeps Space and the arrows for itself (Space ticks a box, arrows move a slider).
+    if (target.matches && target.matches('input:not([type]), input[type=text], input[type=number], textarea, select')) return;
+    if (target.matches && target.matches('button, input[type=checkbox], input[type=range]')
+        && [' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
     const clip = clipAtTime(state.playhead);
     switch (e.key) {
       case ' ':
         e.preventDefault();
-        togglePlay();
+        if (state.exact) {                          // a rendered preview: play or pause it
+          const player = $('player');
+          if (player.paused) player.play().catch(() => {}); else player.pause();
+        } else {
+          togglePlay();
+        }
         break;
       case 'ArrowLeft':
       case 'ArrowRight': {
@@ -271,6 +344,7 @@ function wireTransport() {
     state.sources[clip] = value;
     renderChips();
     updateViewer();
+    refreshExport();
     saveSession();
   });
   wireRecovery();

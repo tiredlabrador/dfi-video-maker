@@ -17,6 +17,20 @@ function closeExport() {
   show($('export-panel'), false);
 }
 
+/** Keep the open panel up to date as clips, the photo or the footage change. */
+function refreshExport() {
+  if (!$('export-panel').hidden) renderExportList();
+}
+
+/**
+ * The footage folder is set but its footage isn't loaded (still looking, the
+ * drive is unplugged, or the app restarted). Clips that would use it mustn't
+ * quietly turn into photo clips.
+ */
+function footageMissing() {
+  return Boolean($('footage-folder').value.trim()) && !state.footage;
+}
+
 /** What will be made: one line per clip, and anything that would stop it. */
 function renderExportList() {
   const list = $('export-list');
@@ -36,10 +50,13 @@ function renderExportList() {
   if (!state.starts.length) {
     blocked = state.audio ? 'Add a clip first: double-click the timeline, or press “+ Clip”.'
       : 'Choose the mix first.';
+  } else if (footageMissing() && state.starts.some((_, i) => state.sources[i] !== 'photo')) {
+    blocked = 'The footage isn’t loaded (is the drive plugged in?). Press Find, '
+      + 'or clear the footage folder to make photo clips.';
   }
   const square = $('export-square');
   square.disabled = !state.photo;
-  if (!state.photo) square.checked = false;
+  square.checked = Boolean(state.photo) && state.squareWanted;
   $('export-square-row').title = state.photo ? '' : 'Made from the photo: choose one to include it';
   const go = $('export-go');
   go.disabled = Boolean(blocked) || state.busy;
@@ -87,6 +104,10 @@ function previewClip() {
   const clip = clipAtTime(state.playhead) >= 0 ? clipAtTime(state.playhead) : state.selected;
   if (!state.audio) { setError('Choose the mix first.'); return; }
   if (!state.starts.length) { setError('Add a clip first: double-click the timeline, or press “+ Clip”.'); return; }
+  if (footageMissing() && state.sources[clip] !== 'photo') {
+    setError('The footage isn’t loaded (is the drive plugged in?). Press Find first.');
+    return;
+  }
   if (clipSource(clip) === 'photo' && !state.photo) {
     setError(`Clip ${clip + 1} uses the photo: choose one, or move it into the filmed part.`);
     return;
@@ -112,7 +133,7 @@ function startExport() {
   show($('progress-fill').parentElement, true);
   $('progress-fill').style.width = '0%';
   $('progress-text').textContent = 'Starting…';
-  runJob('export', design({ square: $('export-square').checked }),
+  runJob('export', design({ square: Boolean(state.photo) && state.squareWanted }),
     (f, message) => {
       $('progress-fill').style.width = `${Math.round(f * 100)}%`;
       $('progress-text').textContent = message;
@@ -186,6 +207,7 @@ function wireExport() {
   });
   $('export-close').addEventListener('click', closeExport);
   $('export-go').addEventListener('click', startExport);
+  $('export-square').addEventListener('change', (e) => { state.squareWanted = e.target.checked; });
   $('preview-btn').addEventListener('click', previewClip);
   $('exact-close').addEventListener('click', closeExact);
 }

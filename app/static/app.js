@@ -23,7 +23,7 @@ const state = {
   busy: false,
   polling: null,
   artFor: null,            // the track whose artwork is being replaced
-  zip: null,
+  zip: null,               // {url, made}: the zip, and what the list looked like when it was made
 };
 let nextId = 1;
 
@@ -198,7 +198,7 @@ function fillRow(track) {
   }
   if (track.override) art.insertAdjacentHTML('beforeend', '<span class="badge">YOURS</span>');
   track.el.classList.toggle('has-problem', Boolean(track.problem));
-  q('.clip-time').value = timecode(track.start);
+  if (document.activeElement !== q('.clip-time')) q('.clip-time').value = timecode(track.start);
   const short = track.duration && track.start + CLIP > track.duration + 0.05;
   q('.clip-note').textContent = track.problem
     || (short ? `The track is only ${timecode(track.duration)} long, so this clip will run short.` : '');
@@ -217,8 +217,10 @@ function renderState(track) {
   else if (r.status === 'pending') label.textContent = r.running ? 'Rendering…' : 'Waiting';
   else if (r.status === 'error') { label.textContent = 'Failed'; label.classList.add('error'); label.title = r.error || ''; }
   else if (r.status === 'done') {
-    label.textContent = r.preview ? 'Preview ready' : 'Rendered ✓';
-    if (!r.preview) label.classList.add('done');
+    const stale = isStale(track);
+    label.textContent = stale ? 'Changed: render again' : (r.preview ? 'Preview ready' : 'Rendered ✓');
+    if (stale) label.classList.add('error');
+    else if (!r.preview) label.classList.add('done');
     const watch = document.createElement('button');
     watch.type = 'button';
     watch.textContent = 'Watch';
@@ -232,13 +234,31 @@ function renderState(track) {
   track.el.querySelector('.preview').disabled = state.busy || track.reading || Boolean(track.problem);
 }
 
-/** Changing a track makes its finished video out of date. */
+/**
+ * What a render is made from: the details, the clip, the artwork and (for the
+ * real thing, whose file name carries it) the number in the list.
+ */
+function madeFrom(track, preview) {
+  const position = preview ? 0 : state.tracks.indexOf(track) + 1;
+  return JSON.stringify([track.title.trim(), track.artist.trim(), Math.round(track.start),
+                         track.override ? track.override.token : '', position]);
+}
+
+/** Has the track changed (or moved) since its video was made? */
+function isStale(track) {
+  const r = track.result;
+  return Boolean(r && r.status === 'done' && track.made && madeFrom(track, r.preview) !== track.made);
+}
+
+/** The whole list as it stands: what a "Download all" zip must still match. */
+function listKey() {
+  return JSON.stringify(state.tracks.map((t) => [t.id, madeFrom(t, false)]));
+}
+
+/** Something about a track changed: its result may be out of date now. */
 function staleResult(track) {
-  if (track.result && track.result.status === 'done') {
-    track.result = null;
-    renderState(track);
-    if (state.selected === track) showViewer();
-  }
+  renderState(track);
+  show($('zip-download'), Boolean(state.zip) && state.zip.made === listKey());
 }
 
 function removeTrack(track) {
@@ -262,11 +282,12 @@ function buildWave(track, container) {
   track.ws = ws;
   ws.on('decode', (seconds) => {
     track.duration = track.duration || seconds;
+    const length = Math.min(CLIP, seconds);
     track.region = regions.addRegion({
-      start: track.start, end: Math.min(seconds, track.start + CLIP),
+      start: track.start, end: track.start + length, minLength: length, maxLength: length,
       color: 'rgba(255, 225, 77, 0.28)', drag: true, resize: false,
     });
-    track.region.on('update-end', () => setStart(track, track.region.start, false));
+    track.region.on('update-end', () => setStart(track, track.region.start));
     fillRow(track);
   });
   // Click anywhere on the waveform: the clip starts there.
@@ -277,13 +298,14 @@ function buildWave(track, container) {
   ws.on('error', () => { /* the waveform is a nicety: the render doesn't need it */ });
 }
 
-function setStart(track, t, moveRegion = true) {
+function setStart(track, t) {
   const latest = Math.max(0, (track.duration || t + CLIP) - CLIP);
   track.start = Math.round(Math.max(0, Math.min(t, latest)));
-  if (track.region && moveRegion) {
-    track.region.setOptions({ start: track.start, end: Math.min(track.duration || Infinity, track.start + CLIP) });
+  if (track.region) {                    // the box shows exactly what will be rendered
+    const length = Math.min(CLIP, track.duration || CLIP);
+    track.region.setOptions({ start: track.start, end: track.start + length });
   }
-  if (track.ws && track.ws.isPlaying()) track.region?.play();
+  if (track.ws && track.ws.isPlaying()) track.region?.play(true);
   staleResult(track);
   fillRow(track);
 }
@@ -297,7 +319,8 @@ function toggleListen(track) {
   if (!track.ws) return;
   for (const other of state.tracks) if (other !== track && other.ws?.isPlaying()) other.ws.pause();
   if (track.ws.isPlaying()) { track.ws.pause(); return; }
-  if (track.region) track.region.play(); else track.ws.play(track.start);
+  $('player').pause();                    // one sound at a time
+  if (track.region) track.region.play(true); else track.ws.play(track.start);
 }
 
 /* ── order and numbers ───────────────────────────────────────────── */
@@ -314,14 +337,13 @@ function refresh() {
   $('render-all').disabled = !ready;
   $('preview-all').disabled = !ready;
   for (const t of state.tracks) renderState(t);
-  show($('zip-download'), Boolean(state.zip));
+  show($('zip-download'), Boolean(state.zip) && state.zip.made === listKey());
 }
 
 function reorderFromList() {
   const order = [...$('track-list').children].map((li) => Number(li.dataset.id));
   state.tracks.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
-  state.zip = null;                      // the old zip's numbers no longer match
-  refresh();
+  refresh();                             // renders and the zip notice if their numbers changed
 }
 
 /* ── the viewer ──────────────────────────────────────────────────── */
@@ -364,6 +386,7 @@ function playResult(track, autoplay = true) {
   const r = track.result;
   if (!r || r.status !== 'done') return;
   const player = $('player');
+  for (const t of state.tracks) if (t.ws?.isPlaying()) t.ws.pause();   // one sound at a time
   if (!player.src.endsWith(r.download_url)) player.src = r.download_url;
   show($('stage-empty'), false);
   show($('stage-art'), false);
@@ -435,8 +458,9 @@ async function render(tracks, preview) {
   const usable = tracks.filter((t) => !t.problem);
   if (!usable.length) return;
   state.busy = true;
-  if (tracks.length === state.tracks.length) state.zip = null;
-  for (const t of usable) { t.result = { status: 'pending' }; }
+  const whole = !preview && usable.length === state.tracks.length;
+  const startedAs = listKey();
+  for (const t of usable) { t.result = { status: 'pending' }; t.made = madeFrom(t, preview); }
   refresh();
   show($('batch-progress'), true);
   $('progress-fill').style.width = '0%';
@@ -464,10 +488,10 @@ async function render(tracks, preview) {
     return;
   }
   clearInterval(state.polling);
-  state.polling = setInterval(() => follow(job.id, usable, preview), 500);
+  state.polling = setInterval(() => follow(job.id, usable, preview, whole ? startedAs : null), 500);
 }
 
-async function follow(jobId, tracks, preview) {
+async function follow(jobId, tracks, preview, zipFor) {
   let job;
   try { job = await (await fetch(`/api/jobs/${jobId}`)).json(); } catch { return; }
   $('progress-fill').style.width = `${Math.round((job.progress || 0) * 100)}%`;
@@ -488,8 +512,9 @@ async function follow(jobId, tracks, preview) {
     if (job.status === 'error') notify(job.error || 'That failed.');
     const failed = items.filter((i) => i.status === 'error').length;
     if (failed) notify(`${failed} track${failed === 1 ? '' : 's'} couldn’t be made: hover “Failed” to see why.`, 'warn');
-    if (!preview && tracks.length === state.tracks.length && job.zip_url) {
-      state.zip = job.zip_url;
+    // The zip holds the list as it was sent: only offer it while that's still true.
+    if (zipFor && job.zip_url) {
+      state.zip = { url: job.zip_url, made: zipFor };
       $('zip-download').href = job.zip_url;
     }
     if (state.selected && tracks.includes(state.selected)) showViewer();
@@ -529,6 +554,10 @@ function wire() {
   });
 
   Sortable.create($('track-list'), { handle: '.grip', animation: 150, onEnd: reorderFromList });
+  // Playing a result stops any clip being listened to.
+  $('player').addEventListener('play', () => {
+    for (const t of state.tracks) if (t.ws?.isPlaying()) t.ws.pause();
+  });
 
   // Space plays the selected track's clip.
   document.addEventListener('keydown', (e) => {
