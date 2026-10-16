@@ -172,33 +172,46 @@ function zoomStep(direction) {
 
 /* ── drawing ─────────────────────────────────────────────────────── */
 
-/** Size a canvas for the screen and hand back its drawing context. */
+/** Size a canvas for the screen (only when that changed) and hand back its drawing context. */
 function prepare(canvas) {
   const ratio = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w) return null;
-  canvas.width = w * ratio; canvas.height = h * ratio;
+  const pw = Math.round(w * ratio), ph = Math.round(h * ratio);
+  if (canvas.width !== pw || canvas.height !== ph) { canvas.width = pw; canvas.height = ph; }
   const ctx = canvas.getContext('2d');
-  ctx.scale(ratio, ratio);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  return { ctx, w, h };
+  return { ctx, w, h, ratio };
 }
 
-/** Draw moments t0..t1 of the mix: shape, filmed parts, transitions, clips, playhead. */
-function drawStrip(canvas, t0, t1, peaks, perSecond, close) {
-  const box = prepare(canvas);
-  if (!box) return null;
-  const { ctx, w, h } = box;
+/*
+ * What doesn't move while playing (the ruler, the mix's shape, the filmed
+ * strip, the transitions) is drawn once into a layer and reused; each tick
+ * only adds the clips and the playhead on top.
+ */
+const backdrops = new WeakMap();                    // canvas -> {inputs, layer}
+
+function backdrop(canvas, box, t0, t1, peaks, perSecond, close) {
+  const { w, h, ratio } = box;
+  const footage = state.footage && state.audio && state.footage.audio === state.audio.token
+    ? state.footage : null;
+  const inputs = [t0, t1, w, h, ratio, peaks, perSecond, footage, state.transitions];
+  const kept = backdrops.get(canvas);
+  if (kept && kept.inputs.every((v, i) => v === inputs[i])) return kept.layer;
+  const layer = (kept && kept.layer) || document.createElement('canvas');
+  layer.width = Math.round(w * ratio); layer.height = Math.round(h * ratio);
+  const ctx = layer.getContext('2d');
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   const top = close ? RULER : 0;
   const span = t1 - t0;
   const xOf = (t) => (t - t0) / span * w;
-  const accent = ACCENTS[state.colour] || ACCENTS.yellow;
   const th = h - top;
 
   if (close) {                                      // the ruler
     ctx.fillStyle = '#141416';
     ctx.fillRect(0, 0, w, RULER);
-    const step = span <= 90 ? 10 : span <= 300 ? 30 : 60;
+    const step = span <= 90 ? 10 : span <= 300 ? 30 : span <= 1200 ? 60 : 300;
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.font = '10px -apple-system, sans-serif';
     for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
@@ -207,16 +220,18 @@ function drawStrip(canvas, t0, t1, peaks, perSecond, close) {
       ctx.fillText(timecode(t), x + 3, 11);
     }
   }
-  ctx.fillStyle = 'rgba(255,255,255,0.28)';         // the mix's loudness
+  ctx.fillStyle = 'rgba(255,255,255,0.28)';         // the mix's loudness, as one shape
+  ctx.beginPath();
   for (let x = 0; x < w; x++) {
     const i = Math.floor((t0 + (x + 0.5) / w * span) * perSecond);
     const v = peaks.length ? peaks[Math.max(0, Math.min(peaks.length - 1, i))] : 0.15;
     const bar = Math.max(1, v * (th - 10));
-    ctx.fillRect(x, top + (th - bar) / 2, 1, bar);
+    ctx.rect(x, top + (th - bar) / 2, 1, bar);
   }
-  if (state.footage && state.audio && state.footage.audio === state.audio.token) {
+  ctx.fill();
+  if (footage) {
     ctx.fillStyle = '#fff';                         // filmed: a strip along the bottom
-    for (const m of state.footage.matches) {
+    for (const m of footage.matches) {
       const a = xOf(m.mix_from), b = xOf(m.mix_to);
       if (b > 0 && a < w) ctx.fillRect(a, h - 3, Math.max(2, b - a), 3);
     }
@@ -224,12 +239,29 @@ function drawStrip(canvas, t0, t1, peaks, perSecond, close) {
   ctx.strokeStyle = 'rgba(255,255,255,0.5)';        // likely transitions: dotted
   ctx.lineWidth = 1;
   ctx.setLineDash([2, 3]);
+  ctx.beginPath();
   for (const t of state.transitions) {
     if (t < t0 || t > t1) continue;
     const x = Math.round(xOf(t)) + 0.5;
-    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, h); ctx.stroke();
+    ctx.moveTo(x, top); ctx.lineTo(x, h);
   }
+  ctx.stroke();
   ctx.setLineDash([]);
+  backdrops.set(canvas, { inputs, layer });
+  return layer;
+}
+
+/** Draw moments t0..t1 of the mix: shape, filmed parts, transitions, clips, playhead. */
+function drawStrip(canvas, t0, t1, peaks, perSecond, close) {
+  const box = prepare(canvas);
+  if (!box) return null;
+  const { ctx, w, h } = box;
+  ctx.drawImage(backdrop(canvas, box, t0, t1, peaks, perSecond, close), 0, 0, w, h);
+  const top = close ? RULER : 0;
+  const span = t1 - t0;
+  const xOf = (t) => (t - t0) / span * w;
+  const accent = ACCENTS[state.colour] || ACCENTS.yellow;
+  const th = h - top;
   const len = clipLength();
   state.starts.forEach((start, i) => {
     if (start + len < t0 || start > t1) return;

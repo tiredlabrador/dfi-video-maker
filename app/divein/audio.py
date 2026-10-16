@@ -27,8 +27,12 @@ def decode_excerpt(path: str, start: float, seconds: float,
     25-second clip. If the clip runs past the end of the mix it is padded with
     silence, so the video is always exactly the length asked for.
     """
-    command = ["ffmpeg", "-v", "error", "-ss", f"{max(0.0, start):.3f}",
-               "-t", f"{seconds:.3f}", "-i", path,
+    # Decoding from a jump garbles the first 1/20th of a second (MP3 frames
+    # lean on the ones before), so start half a second early and drop it.
+    start = max(0.0, start)
+    lead = round(min(start, 0.5) * sample_rate) / sample_rate
+    command = ["ffmpeg", "-v", "error", "-ss", f"{start - lead:.6f}",
+               "-t", f"{seconds + lead:.6f}", "-i", path,
                "-f", "f32le", "-ac", "2", "-ar", str(sample_rate), "pipe:1"]
     result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
@@ -36,7 +40,7 @@ def decode_excerpt(path: str, start: float, seconds: float,
         # sentence (ffmpeg's own message includes private file paths).
         print("ffmpeg could not decode:", result.stderr.decode(errors="replace").strip()[-500:])
         raise ValueError("That audio file couldn't be read at that start time.")
-    samples = np.frombuffer(result.stdout, dtype=np.float32).reshape(-1, 2)
+    samples = np.frombuffer(result.stdout, dtype=np.float32).reshape(-1, 2)[round(lead * sample_rate):]
     if samples.shape[0] == 0:
         raise ValueError("That clip start is after the end of the mix.")
     wanted = int(round(seconds * sample_rate))

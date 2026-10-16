@@ -24,7 +24,10 @@ function seek(t, { rough = false, reveal = false } = {}) {
   state.playhead = Math.max(0, Math.min(total, t));
   // Never lose the playhead off the close-up: bring it back if it went off.
   revealTime(state.playhead, reveal ? 0.08 : 0);
-  if (state.playing) { restartPlaying(); return; }
+  if (state.playing) {
+    if (!jumpWithin(state.playhead)) restartPlaying();
+    return;
+  }
   drawTimeline();
   updateViewer(rough);
 }
@@ -87,6 +90,26 @@ function restartPlaying() {
   $('listen').pause();
   $('listen-next').pause();
   startPlaying();
+}
+
+/**
+ * While playing, a click inside the stretch of sound already loaded just
+ * jumps there: no new stretch to fetch, so no gap. False if it's outside.
+ */
+function jumpWithin(t) {
+  const player = sound();
+  const into = t - (state.listenFrom || 0);
+  if (!ticker || player.readyState < 3 || !Number.isFinite(player.duration)
+      || into < 0 || into > player.duration - 2) return false;
+  player.currentTime = into;
+  updateViewer();                                   // may switch to another video first
+  const at = state.viewing && state.viewing.at;
+  if (at) {
+    $('footage').currentTime = at.time;             // the sound waits if the picture needs to load
+    lastAlign = performance.now();
+  }
+  drawTimeline();
+  return true;
 }
 
 /** Load sound from the playhead, get the picture ready too, then set off together. */

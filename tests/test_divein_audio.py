@@ -347,3 +347,18 @@ def test_in_volume_mode_a_steady_sound_holds_steady(level_cfg):
 def test_in_volume_mode_silence_still_closes_the_coil(level_cfg):
     gap = analyse(np.zeros((SR * 2, 2), np.float32), SR, FPS, level_cfg, episode="x")["gap"]
     assert gap.max() == pytest.approx(level_cfg["audio"]["gap_silence"])
+
+
+def test_an_excerpt_is_clean_from_its_very_first_sample(tmp_path):
+    """Jumping into an MP3 garbles the first 1/20th of a second unless decoding starts earlier."""
+    import subprocess
+    path = tmp_path / "noise.mp3"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "anoisesrc=d=12:c=pink:a=0.5",
+                    "-ac", "2", "-ar", "44100", "-c:a", "libmp3lame", str(path)], check=True)
+    whole = np.frombuffer(subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "f32le",
+                                          "-ac", "2", "-ar", "44100", "-"], capture_output=True,
+                                         check=True).stdout, np.float32).reshape(-1, 2)
+    for start in (0.0, 0.2, 4.321):
+        got = decode_excerpt(str(path), start=start, seconds=2.0, sample_rate=44100)
+        first = round(start * 44100)
+        assert np.abs(got - whole[first:first + len(got)]).max() < 1e-3, start

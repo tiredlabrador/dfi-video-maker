@@ -161,6 +161,8 @@ class DiveInService:
         self._still_lock = threading.Lock()
         self._zip_lock = threading.Lock()
         self._latest_still: OrderedDict = OrderedDict()   # page -> newest request
+        self._whole_lock = threading.Lock()
+        self._whole_making: set[str] = set()              # mixes being decoded whole
 
     # ── routing ──────────────────────────────────────────────────────────
     def handle(self, h, method: str, path: str) -> None:
@@ -279,6 +281,7 @@ class DiveInService:
                 os.remove(tmp)
         if kind == "audio":
             self._durations[token] = info["duration"]
+            self.whole_sound(final)                      # ready by the time Play is pressed
         return info
 
     def _duration(self, path: str) -> float:
@@ -523,6 +526,7 @@ class DiveInService:
         for the close-up that shows a few minutes across the whole screen.
         """
         path = self._resolve(token, "audio file")
+        self.whole_sound(path)                           # a restored mix: get it ready for playing
         points = self.OVERVIEW_POINTS
         if per_second is not None:
             try:
@@ -575,18 +579,80 @@ class DiveInService:
         name = hashlib.sha1(f"{path}|{start:.3f}|{seconds:.3f}".encode()).hexdigest()[:20] + ".wav"
         out = os.path.join(folder, name)
         if not os.path.exists(out):
-            try:
-                samples = decode_excerpt(path, start, seconds, 44100)
-            except ValueError as exc:
-                raise BadRequest(str(exc))
-            partial = out + ".part"
-            write_wav(samples, 44100, partial)
+            partial = f"{out}.{threading.get_ident()}.part"
+            whole = self.whole_sound(path)
+            if whole:                                    # a quick cut from the decoded mix
+                self._cut_whole(whole, start, seconds, partial)
+            else:                                        # the first few: decode just this stretch
+                try:
+                    samples = decode_excerpt(path, start, seconds, 44100)
+                except ValueError as exc:
+                    raise BadRequest(str(exc))
+                write_wav(samples, 44100, partial)
             os.replace(partial, out)
             kept = sorted((os.path.getmtime(os.path.join(folder, n)), n)
                           for n in os.listdir(folder) if n.endswith(".wav"))
             for _, old in kept[:-30]:                    # the last 30 cuts are plenty
                 os.remove(os.path.join(folder, old))
         return h._send_file(out, "audio/wav", "clip.wav")
+
+    # The whole mix, decoded once to plain 16-bit stereo. Clicking around while
+    # playing asks for a new stretch every click: decoding each one fresh
+    # takes a fifth of a second, cutting it from this takes a few thousandths.
+    WHOLE_RATE = 44100
+    WHOLE_KEEP = 3                                       # mixes kept decoded (~400MB an hour each)
+
+    def whole_sound(self, path: str) -> str | None:
+        """The decoded mix's file, or None while it's being made (started if need be)."""
+        folder = os.path.join(self.root, "excerpts")
+        out = os.path.join(folder, hashlib.sha1(path.encode()).hexdigest()[:20] + ".pcm")
+        if os.path.exists(out):
+            return out
+        with self._whole_lock:
+            if path in self._whole_making:
+                return None
+            self._whole_making.add(path)
+
+        def make():
+            partial = out + ".part"
+            try:
+                os.makedirs(folder, exist_ok=True)
+                done = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", path, "-f", "s16le",
+                                       "-ac", "2", "-ar", str(self.WHOLE_RATE), partial],
+                                      capture_output=True)
+                if done.returncode == 0:
+                    os.replace(partial, out)
+                    kept = sorted((os.path.getmtime(os.path.join(folder, n)), n)
+                                  for n in os.listdir(folder) if n.endswith(".pcm"))
+                    for _, old in kept[:-self.WHOLE_KEEP]:
+                        os.remove(os.path.join(folder, old))
+                else:                                    # cutting fresh each time still works
+                    print("Couldn't decode the whole mix:", done.stderr.decode(errors="replace")[-300:])
+            except OSError as exc:
+                print("Couldn't decode the whole mix:", exc)
+            finally:
+                if os.path.exists(partial):
+                    os.remove(partial)
+                with self._whole_lock:
+                    self._whole_making.discard(path)
+        threading.Thread(target=make, daemon=True).start()
+        return None
+
+    def _cut_whole(self, whole: str, start: float, seconds: float, out: str) -> None:
+        """`seconds` from `start` of the decoded mix, as a WAV; silence past the end."""
+        import wave
+        frame = 4                                        # 2 channels x 2 bytes
+        first = int(round(start * self.WHOLE_RATE))
+        count = int(round(seconds * self.WHOLE_RATE))
+        with open(whole, "rb") as f:
+            f.seek(first * frame)
+            data = f.read(count * frame)
+        data += b"\0" * (count * frame - len(data))
+        with wave.open(out, "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(self.WHOLE_RATE)
+            w.writeframes(data)
 
     def _find_transitions(self, token) -> dict:
         """Roughly where the mix moves from one record to the next (a few seconds' work)."""

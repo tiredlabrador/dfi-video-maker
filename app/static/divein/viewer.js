@@ -86,15 +86,15 @@ function updateHead() {
   const clip = state.audio ? clipAtTime(state.playhead) : -1;
   const len = clipLength();
   if (!state.audio) {
-    $('clip-title').textContent = 'No mix yet';
-    $('clip-range').textContent = '';
+    setText('clip-title', 'No mix yet');
+    setText('clip-range', '');
   } else if (clip >= 0) {
     const s = state.starts[clip];
-    $('clip-title').textContent = `Clip ${clip + 1}`;
-    $('clip-range').textContent = `${timecode(s)} – ${timecode(s + len)}`;
+    setText('clip-title', `Clip ${clip + 1}`);
+    setText('clip-range', `${timecode(s)} – ${timecode(s + len)}`);
   } else {
-    $('clip-title').textContent = timecode(state.playhead, true);
-    $('clip-range').textContent = state.starts.length ? 'between clips' : '';
+    setText('clip-title', timecode(state.playhead, true));
+    setText('clip-range', state.starts.length ? 'between clips' : '');
   }
   show($('source-seg'), clip >= 0);
   show($('delete-clip'), clip >= 0);
@@ -108,9 +108,15 @@ function updateHead() {
   }
 }
 
+/** Change a label only when its words change: rewriting it every tick costs the page a re-layout. */
+function setText(id, text) {
+  const el = $(id);
+  if (el.textContent !== text) el.textContent = text;
+}
+
 function updateTime() {
-  $('time-now').textContent = timecode(state.playhead, true);
-  $('time-total').textContent = timecode(duration());
+  setText('time-now', timecode(state.playhead, true));
+  setText('time-total', timecode(duration()));
 }
 
 /** When there's nothing to show, say why and what to do, rather than look broken. */

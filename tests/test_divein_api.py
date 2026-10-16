@@ -671,3 +671,64 @@ def test_a_refused_upload_does_not_stay_on_disk(server):
     with pytest.raises(urllib.error.HTTPError):
         raw_upload(server, "photo", "not-a-photo.jpg", b"this is not an image" * 100)
     assert set(os.listdir(server.divein.uploads)) == before
+
+
+@pytest.fixture(scope="module")
+def noisy_mp3(tmp_path_factory):
+    """Noise never repeats, so a cut in the wrong place can't look right by chance."""
+    path = tmp_path_factory.mktemp("noisy") / "mix.mp3"
+    gv.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "anoisesrc=d=20:c=pink:a=0.5",
+            "-ac", "2", "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "192k", str(path)], "noise")
+    return path.read_bytes()
+
+
+def wav_frames(response):
+    import wave
+    with wave.open(io.BytesIO(response.read())) as w:
+        return np.frombuffer(w.readframes(w.getnframes()), np.int16).reshape(-1, 2).astype(int)
+
+
+def wait_for_whole_sound(server, token, timeout=30):
+    import time
+    svc, deadline = server.divein, time.time() + timeout
+    while svc.whole_sound(svc._resolve(token, "audio file")) is None:
+        assert time.time() < deadline, "the whole mix was never decoded"
+        time.sleep(0.05)
+
+
+@pytest.mark.parametrize("start, seconds", [(0, 3), (3.217, 4), (11.5, 2.25), (18, 4)])
+def test_cuts_from_the_once_decoded_mix_are_exactly_that_moment(server, noisy_mp3, start, seconds):
+    """Clicking around while playing cuts from the mix decoded once: to the sample, silence past the end."""
+    token = raw_upload(server, "audio", "mix.mp3", noisy_mp3)["token"]
+    wait_for_whole_sound(server, token)
+    got = wav_frames(get(server, f"/api/divein/excerpt?audio={token}&start={start}&seconds={seconds}"))
+    import subprocess
+    whole = np.frombuffer(subprocess.run(["ffmpeg", "-v", "error", "-i", server.divein._resolve(token, "audio file"),
+                                          "-f", "s16le", "-ac", "2", "-ar", "44100", "-"],
+                                         capture_output=True, check=True).stdout,
+                          np.int16).reshape(-1, 2).astype(int)
+    first, count = round(start * 44100), round(seconds * 44100)
+    want = whole[first:first + count]
+    want = np.concatenate([want, np.zeros((count - len(want), 2), int)])
+    assert np.array_equal(got, want)
+
+
+def test_the_once_decoded_mix_is_at_the_same_moment_as_cutting_it_fresh(server, noisy_mp3):
+    """Cutting fresh garbles the first 1/20th of a second; after that the two are identical."""
+    from app.divein.audio import decode_excerpt
+    token = raw_upload(server, "audio", "mix.mp3", noisy_mp3)["token"]
+    wait_for_whole_sound(server, token)
+    got = wav_frames(get(server, f"/api/divein/excerpt?audio={token}&start=7.3&seconds=3"))
+    fresh = decode_excerpt(server.divein._resolve(token, "audio file"), 7.3, 3, 44100)
+    fresh = np.clip(np.round(fresh * 32767), -32768, 32767).astype(int)
+    assert np.abs(got[4410:] - fresh[4410:]).max() <= 2
+
+
+def test_cutting_from_the_once_decoded_mix_is_quick(server, noisy_mp3):
+    import time
+    token = raw_upload(server, "audio", "mix.mp3", noisy_mp3)["token"]
+    wait_for_whole_sound(server, token)
+    t = time.perf_counter()
+    for start in (1, 2, 3, 4, 5):
+        get(server, f"/api/divein/excerpt?audio={token}&start={start}.5&seconds=10").read()
+    assert (time.perf_counter() - t) / 5 < 0.05
