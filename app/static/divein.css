@@ -86,7 +86,8 @@ body.divein { display: flex; flex-direction: column; height: 100vh; overflow: hi
                display: flex; align-items: center; gap: .55rem; padding: .3rem .7rem;
                background: rgba(20,20,22,.82); border-radius: 999px; white-space: nowrap;
                backdrop-filter: blur(6px); }
-.frame-tools input { width: 110px; }
+.frame-tools { max-width: calc(100% - 1rem); }
+.frame-tools input { width: 110px; min-width: 40px; flex: 1 1 110px; }
 
 .transport { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
              gap: .8rem; padding: .55rem .9rem .7rem; }

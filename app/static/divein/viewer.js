@@ -153,13 +153,14 @@ function updateFrameTools(v) {
   show($('frame-tools'), (footage || photo) && !state.playing);
   $('stage').classList.toggle('can-frame', footage);
   const zoom = $('frame-zoom');
+  show($('frame-whole'), footage);
+  $('frame-reset').textContent = footage ? 'Fill' : 'Reset';
+  $('frame-reset').title = footage ? 'Fill the frame, centred' : 'Back to the whole photo, centred';
   if (footage) {
-    $('frame-what').textContent = `Clip ${v.clip + 1}`;
     zoom.min = String(footageMinZoom());
     zoom.max = String(MAX_FOOTAGE_ZOOM);
     zoom.value = String(framingOf(v.clip).zoom);
   } else if (photo) {
-    $('frame-what').textContent = 'Photo';
     zoom.min = '1';
     zoom.max = '3';
     zoom.value = String(state.crop.zoom);
@@ -352,6 +353,10 @@ function wireFraming() {
     const v = state.viewing, zoom = Number($('frame-zoom').value) || 1;
     if (v && v.at && v.clip >= 0) setFraming(v.clip, { zoom });
     else zoomAt(zoom);
+  });
+  $('frame-whole').addEventListener('click', () => {
+    const v = state.viewing;
+    if (v && v.at && v.clip >= 0) setFraming(v.clip, { cx: 0.5, cy: 0.5, zoom: footageMinZoom() });
   });
   $('frame-reset').addEventListener('click', () => {
     const v = state.viewing;
