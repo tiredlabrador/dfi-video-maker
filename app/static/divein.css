@@ -126,6 +126,10 @@ body.divein { display: flex; flex-direction: column; height: 100vh; overflow: hi
 .dock-bar { display: flex; align-items: center; gap: .6rem; height: 32px; margin-bottom: .4rem; }
 .dock-bar .spacer { flex: 1; }
 .hover-read { font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zoom { display: flex; align-items: center; gap: .15rem; }
+.zoom .icon-btn { width: 26px; height: 26px; color: var(--muted); }
+.zoom .icon-btn:hover { color: var(--text); }
+.zoom input { width: 120px; }
 .length { display: flex; align-items: center; gap: .35rem; white-space: nowrap; }
 .length .input { width: 3.6rem; padding: .25rem .4rem; }
 .clip-chips { display: flex; gap: .3rem; overflow-x: auto; max-width: 50%; }

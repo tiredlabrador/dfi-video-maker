@@ -141,11 +141,33 @@ function revealTime(t, margin = 0.08) {
   if (t < start + span * margin || t > start + span * (1 - margin)) centreView(t);
 }
 
-function setZoom(span) {
-  state.view.span = span;
-  centreView(state.playhead);
-  setSegment('zoom-choice', String(span));
+/*
+ * Zoom: the slider runs from the whole mix (left) to 20 seconds (right). Each
+ * step zooms by the same proportion, so it feels even all the way along.
+ */
+const CLOSEST = 20;                          // seconds across, zoomed right in
+
+function widest() { return Math.max(CLOSEST, duration() || 3600); }
+
+function spanFromSlider(v) { return widest() * (CLOSEST / widest()) ** (v / 1000); }
+
+function sliderFromSpan(span) {
+  return Math.log(widest() / span) / Math.log(widest() / CLOSEST) * 1000 || 0;
+}
+
+/** Zoom to `span` seconds, keeping `around` (the playhead, unless said) where it is on screen. */
+function setZoom(span, around = state.playhead) {
+  const { start, span: was } = state.view;
+  const at = around >= start && around <= start + was ? (around - start) / was : 0.5;
+  state.view.span = Math.max(CLOSEST, Math.min(widest(), span));
+  state.view.start = around - at * state.view.span;
+  clampView();
   drawTimeline();
+}
+
+/** Zoom in (+1) or out (−1) a notch. */
+function zoomStep(direction) {
+  setZoom(state.view.span / 1.6 ** direction);
 }
 
 /* ── drawing ─────────────────────────────────────────────────────── */
@@ -242,6 +264,7 @@ function drawTimeline() {
   if (!total) return;
   clampView();
   const { start, span } = state.view;
+  $('zoom-slider').value = String(Math.round(sliderFromSpan(span)));
   const coarse = (state.overview && state.overview.peaks) || [];
   const whole = drawStrip($('overview-canvas'), 0, total, coarse, coarse.length / total, false);
   if (whole) {                                      // the close-up's window on the whole
@@ -361,10 +384,8 @@ function wireTimeline() {
     if (!duration()) return;
     e.preventDefault();
     if (e.ctrlKey) {
-      const factor = Math.exp(e.deltaY * 0.01);
-      const middle = state.view.start + state.view.span / 2;
-      state.view.span = Math.max(20, Math.min(duration(), state.view.span * factor));
-      centreView(middle);
+      setZoom(state.view.span * Math.exp(e.deltaY * 0.01), timeAt(e));   // around the pointer
+      return;
     } else {
       const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
       state.view.start += delta / canvas.clientWidth * state.view.span;
@@ -373,6 +394,8 @@ function wireTimeline() {
     drawTimeline();
   }, { passive: false });
 
-  wireSegment('zoom-choice', (v) => setZoom(Number(v)));
+  $('zoom-slider').addEventListener('input', (e) => setZoom(spanFromSlider(Number(e.target.value))));
+  $('zoom-in').addEventListener('click', () => zoomStep(1));
+  $('zoom-out').addEventListener('click', () => zoomStep(-1));
   window.addEventListener('resize', drawTimeline);
 }

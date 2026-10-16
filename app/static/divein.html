@@ -216,10 +216,10 @@
     <div class="spacer"></div>
     <span class="small muted hover-read" id="timeline-hover"></span>
     <label class="small muted length">Length <input type="number" class="input" id="clip-seconds" value="25" min="1" max="120" step="1"> s</label>
-    <div class="seg" role="radiogroup" aria-label="Close-up shows" id="zoom-choice">
-      <button type="button" role="radio" data-value="60" aria-checked="false">1 min</button>
-      <button type="button" role="radio" data-value="240" aria-checked="true">4 min</button>
-      <button type="button" role="radio" data-value="900" aria-checked="false">15 min</button>
+    <div class="zoom" title="Zoom the timeline (− and =, or pinch)">
+      <button type="button" class="icon-btn" id="zoom-out" aria-label="Zoom out"><svg viewBox="0 0 16 16"><path d="M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      <input type="range" id="zoom-slider" min="0" max="1000" step="1" value="500" aria-label="Timeline zoom">
+      <button type="button" class="icon-btn" id="zoom-in" aria-label="Zoom in"><svg viewBox="0 0 16 16"><path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
     </div>
   </div>
   <canvas id="overview-canvas" title="The whole mix: click to go there"></canvas>

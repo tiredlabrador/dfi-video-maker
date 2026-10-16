@@ -323,6 +323,13 @@ function wireKeys() {
       case ']':
         jumpClip(1);
         break;
+      case '=':
+      case '+':
+        zoomStep(1);
+        break;
+      case '-':
+        zoomStep(-1);
+        break;
       case 'Escape':
         if (state.exact) closeExact(); else closeExport();
         break;
