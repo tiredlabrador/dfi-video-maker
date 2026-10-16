@@ -117,6 +117,10 @@ DEFAULTS: dict = {
     "square": {"size": 1080, "tape_centre_y": 603, "name_last_baseline": 1008,
                "jpg_quality": 92},
 
+    # Footage zoomed out smaller than the frame sits over a copy of itself,
+    # blurred (`blur` pixels across a 1080-wide frame) and dimmed (1 = as bright).
+    "backdrop": {"blur": 40.0, "brightness": 0.6},
+
     # max_mbps caps the bitrate: grain is nearly incompressible, and uncapped a
     # 25s clip is well over 100MB. 12 gives roughly 30-40MB and keeps most of
     # the grain; 16 keeps a little more at ~50MB. Instagram re-compresses well
@@ -273,3 +277,31 @@ def seed_for(episode: str, purpose: str) -> int:
 
 def rng_for(episode: str, purpose: str) -> np.random.Generator:
     return np.random.default_rng(seed_for(episode, purpose))
+
+
+# ── the video's shape ────────────────────────────────────────────────────
+# Heights for a 1080-wide video. 4:5 is what every setting above is measured on.
+ASPECTS = {"4:5": 1350, "9:16": 1920}
+
+
+def for_aspect(cfg: dict, aspect: str) -> dict:
+    """
+    The settings for a video of this shape. A 9:16 Reel keeps the 4:5 design
+    whole, in its middle: that's the part Instagram's profile grid shows, and
+    it stays clear of the Reels buttons and caption at the top and bottom.
+    """
+    if aspect not in ASPECTS:
+        raise ValueError(f"The shape must be one of: {', '.join(ASPECTS)}.")
+    height = ASPECTS[aspect]
+    if height == cfg["canvas"]["height"]:
+        return cfg
+    out = copy.deepcopy(cfg)
+    was = cfg["canvas"]["height"]
+    down = (height - was) / 2
+    out["canvas"]["height"] = height
+    out["logo"]["y"] = cfg["logo"]["y"] + down
+    out["glyph"]["box_y"] = cfg["glyph"]["box_y"] + down
+    out["tape"]["centre_y"] = cfg["tape"]["centre_y"] + down
+    out["name"]["last_baseline"] = cfg["name"]["last_baseline"] + down
+    out["vignette"]["centre_y"] = (cfg["vignette"]["centre_y"] * was + down) / height
+    return out

@@ -732,3 +732,46 @@ def test_cutting_from_the_once_decoded_mix_is_quick(server, noisy_mp3):
     for start in (1, 2, 3, 4, 5):
         get(server, f"/api/divein/excerpt?audio={token}&start={start}.5&seconds=10").read()
     assert (time.perf_counter() - t) / 5 < 0.05
+
+
+# ── 9:16 reels ───────────────────────────────────────────────────────────
+def files_of(server, done):
+    return {f["name"][-4:]: get(server, f["url"]).read() for f in done["files"]}
+
+
+def test_a_photo_clip_can_be_a_9_by_16_reel_and_the_square_jpg_is_unchanged(server, media, tmp_path):
+    mix, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    a = raw_upload(server, "audio", "mix.mp3", mix)["token"]
+    made = {}
+    for aspect in ("4:5", "9:16"):
+        done = wait(server, post_json(server, "/api/divein/export",
+                                      design(p, a, starts="0:02", aspect=aspect))["id"])
+        assert done["status"] == "done", done.get("error")
+        made[aspect] = files_of(server, done)
+    clip = tmp_path / "reel.mp4"
+    clip.write_bytes(made["9:16"][".mp4"])
+    import subprocess
+    size = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                           "stream=width,height", "-of", "csv=p=0", str(clip)],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    assert size == "1080,1920"
+    assert made["9:16"][".jpg"] == made["4:5"][".jpg"]
+
+
+def test_the_page_can_show_a_reel_still(server, media):
+    from PIL import Image
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    body = post_json(server, "/api/divein/still", design(p, aspect="9:16"), raw=True)
+    assert Image.open(io.BytesIO(body.read())).size == (1080, 1920)
+    layers = post_json(server, "/api/divein/layers", design(p, aspect="9:16"), raw=True)
+    assert Image.open(io.BytesIO(layers.read())).size == (1080, 1920)
+
+
+def test_an_unknown_shape_is_refused(server, media):
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        post_json(server, "/api/divein/still", design(p, aspect="21:9"), raw=True)
+    assert caught.value.code == 400

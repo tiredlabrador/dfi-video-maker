@@ -21,7 +21,8 @@ const state = {
   photo: null,            // {token, width, height}
   audio: null,            // {token, duration, name}
   crop: { zoom: 1, cx: 0.5, cy: 0.5 },     // the photo's framing (all photo clips)
-  format: 'portrait',
+  format: 'portrait',     // what the viewer shows: 'portrait' (the video) or 'square' (the JPG)
+  aspect: '4:5',          // the video's shape: '4:5' or '9:16'
   colour: 'yellow',
   motion: 'level',
   overrides: {},
@@ -163,6 +164,7 @@ function design(extra = {}) {
     footage_crops: state.starts.map((_, i) => framingOf(i)),
     footage_look: footageLook(),
     lut: $('lut-on').checked,
+    aspect: state.aspect,
     ...extra,
   };
 }
@@ -203,7 +205,7 @@ function save() {
       // becoming the default, so it's left behind rather than carried over.
       colour: state.colour, rings_follow: state.motion, twitch: $('twitch').checked,
       overrides: $('overrides').value, footage_folder: $('footage-folder').value,
-      footage_look: footageLook(),
+      footage_look: footageLook(), aspect: state.aspect,
     }));
   } catch { /* private window: fine */ }
 }
@@ -223,6 +225,8 @@ function restore() {
     if (k === 'brightness') $('look-brightness').value = String(Number(on) || 0);
     else if ($(`look-${k}`)) $(`look-${k}`).setAttribute('aria-pressed', String(Boolean(on)));
   }
+  state.aspect = saved.aspect === '9:16' ? '9:16' : '4:5';
+  setSegment('format-choice', state.aspect);
   state.colour = saved.colour || 'yellow';
   state.motion = saved.rings_follow || 'level';
   setSegment('colour-choice', state.colour);

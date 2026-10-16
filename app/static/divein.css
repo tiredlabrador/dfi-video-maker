@@ -43,6 +43,7 @@ body.divein { display: flex; flex-direction: column; height: 100vh; overflow: hi
   position: relative; overflow: hidden; background: #000; border-radius: 6px;
   aspect-ratio: 4 / 5; width: min(100cqw, 100cqh * 4 / 5);
 }
+.stage.is-reel { aspect-ratio: 9 / 16; width: min(100cqw, 100cqh * 9 / 16); }
 .stage.is-square { aspect-ratio: 1 / 1; width: min(100cqw, 100cqh); }
 .stage-empty { position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
                padding: 1.5rem; gap: .3rem; }
@@ -60,8 +61,11 @@ body.divein { display: flex; flex-direction: column; height: 100vh; overflow: hi
 .stage.is-footage .footage-frame { display: block; }
 .stage.is-footage .frame, .stage.is-footage .stage-empty { display: none !important; }
 .stage.can-frame .footage-frame { cursor: grab; }
-#footage { display: block; width: 100%; height: 100%; object-fit: cover; }
-#graded, .footage-vignette, .footage-grain { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+/* left/top/width/height are set when zoomed out smaller than the frame. */
+#footage { position: absolute; left: 0; top: 0; display: block; width: 100%; height: 100%; object-fit: cover; }
+#graded { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+#footage-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.footage-vignette, .footage-grain { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 /* A live stand-in for the export's look: the export draws it exactly. */
 .footage-vignette { background: radial-gradient(ellipse farthest-corner at 50% 37.5%, transparent 45%, rgba(0,0,0,.65) 100%); }
 .footage-grain { mix-blend-mode: soft-light; opacity: .9; background-repeat: repeat; }

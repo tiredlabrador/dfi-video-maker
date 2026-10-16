@@ -499,3 +499,54 @@ def test_on_log_footage_brightness_comes_before_the_colour_file(server, grey_fla
     level = grey_level(server, token, tmp_path, brightness=50)
     assert level == pytest.approx((1.5 * x) ** 2, abs=0.03)              # before: 0.36
     assert abs(level - 1.5 * x * x) > 0.08                               # after would be 0.24
+
+
+# ── 9:16 reels and zooming out ───────────────────────────────────────────
+def frame_of(path, w, h):
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1", "-i", str(path), "-frames:v", "1",
+                          "-vf", f"scale={w}:{h},format=gray", "-f", "rawvideo", "pipe:1"],
+                         capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.uint8).reshape(h, w).astype(float)
+
+
+def test_a_footage_clip_can_be_a_9_by_16_reel(server, shoot, tmp_path):
+    token = found(server, shoot)
+    _, job = call(server, "/api/divein/export", design(token, aspect="9:16"))
+    job = finished(server, job["id"])
+    assert job["status"] == "done", job.get("error")
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(download(server, job, ".mp4"))
+    video = [s for s in probe(clip)["streams"] if s["codec_type"] == "video"][0]
+    assert (video["width"], video["height"]) == (1080, 1920)
+
+
+@pytest.mark.parametrize("look", [PLAIN, {**PLAIN, "contrast": True}])
+def test_zoomed_out_footage_sits_over_a_blurred_copy_of_itself(server, stripes, tmp_path, look):
+    """
+    White, grey, black stripes: all three across the middle. Above, the
+    frame-filling cut (framed a quarter of the way along, so it spans the
+    white and grey stripes), dimmed and blurred.
+    """
+    token = found(server, stripes)
+    _, job = call(server, "/api/divein/export",
+                  design(token, aspect="9:16", footage_look=look,
+                         footage_crops=[{"cx": 0.25, "cy": 0.5, "zoom": 0.1}]))
+    job = finished(server, job["id"])
+    assert job["status"] == "done", job.get("error")
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(download(server, job, ".mp4"))
+    frame = frame_of(clip, 108, 192)
+    middle, top = frame[96], frame[20]
+    assert middle[5] > 200 and middle[-5] < 50                     # the whole picture, edge to edge
+    assert top[5] > top[-5] + 40                                   # a copy above it...
+    assert top[5] < 200 and 15 < top[-5]                           # ...dimmed, not black...
+    assert np.abs(np.diff(top)).max() < np.abs(np.diff(middle)).max() / 2   # ...and blurred
+
+
+def test_zoomed_out_footage_keeps_the_sync(server, shoot, tmp_path):
+    token = found(server, shoot)
+    _, job = call(server, "/api/divein/export",
+                  design(token, aspect="9:16", footage_crops=[{"cx": 0.5, "cy": 0.5, "zoom": 0.4}]))
+    job = finished(server, job["id"])
+    assert job["status"] == "done", job.get("error")
+    assert job["sync"][0]["in_sync"], job["sync"]

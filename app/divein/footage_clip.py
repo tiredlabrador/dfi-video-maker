@@ -31,6 +31,7 @@ LISTEN = 15.0             # seconds of the clip used to fine-tune and to measure
 APART = 0.1               # a rival line-up at least this far from the best...
 CLEAR = 1.2               # ...must be this much weaker for the best to count
 MAX_ZOOM = 2.0            # further in, 1080p footage looks soft on a phone
+MIN_ZOOM = 0.1            # asked-for zooms below the whole picture stop at the whole picture
 MIN_LIKENESS = 0.15       # and the best must be at least this alike (0 to 1)
 
 
@@ -131,6 +132,84 @@ def measure(clip: str, camera_sound: str, seconds: float) -> float | None:
     return expected - found if clear else None
 
 
+# ── framing ──────────────────────────────────────────────────────────────
+def _even(value: float) -> int:
+    return int(round(value / 2)) * 2
+
+
+def min_zoom(iw: int, ih: int, W: int, H: int) -> float:
+    """How far out the zoom goes: the whole picture just fits across (or down) the frame."""
+    return min(W / iw, H / ih) / max(W / iw, H / ih)
+
+
+def layout(iw: int, ih: int, W: int, H: int, cx: float, cy: float, zoom: float) -> dict:
+    """
+    Where an iw x ih picture goes in a W x H frame. Zoom 1 fills the frame
+    (cut to its shape); in, a smaller part fills it; out, the picture gets
+    smaller than the frame and a blurred copy fills the rest ("backdrop").
+    cx/cy place it: 0 = hard left/top, 1 = hard right/bottom of the room to move.
+
+    source: (x, y, w, h) of the picture used; dest: (x, y, w, h) where it goes.
+    """
+    cover = max(W / iw, H / ih)
+    zoom = min(max(zoom, min_zoom(iw, ih, W, H)), MAX_ZOOM)
+    s = cover * zoom
+    dw, dh = min(W, _even(iw * s)), min(H, _even(ih * s))
+    sw, sh = min(iw, dw / s), min(ih, dh / s)
+    cx, cy = min(max(cx, 0.0), 1.0), min(max(cy, 0.0), 1.0)
+    return {"source": ((iw - sw) * cx, (ih - sh) * cy, sw, sh),
+            "dest": (_even((W - dw) / 2), _even((H - dh) / 2), dw, dh),
+            "size": (dw, dh), "backdrop": dw < W or dh < H}
+
+
+def _picture_size(video: str) -> tuple[int, int]:
+    """The picture's size the right way up: phones store it sideways with a note to turn it."""
+    result = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                             "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
+                             "-of", "json", video], capture_output=True, text=True)
+    try:
+        stream = json.loads(result.stdout)["streams"][0]
+        w, h = int(stream["width"]), int(stream["height"])
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise ValueError("The footage couldn't be read. Is the drive still plugged in?")
+    turns = [s.get("rotation") for s in stream.get("side_data_list") or []]
+    turns.append((stream.get("tags") or {}).get("rotate"))
+    for turn in turns:
+        try:
+            if round(float(turn)) % 180 == 90:
+                return h, w
+        except (TypeError, ValueError):
+            continue
+    return w, h
+
+
+def _picture_filters(iw, ih, w, h, cx, cy, zoom, adjust, backdrop_cfg) -> str:
+    """
+    The ffmpeg filters that frame the footage in a w x h frame. `adjust` are
+    the colour filters (brightness, the colour file), applied to the footage
+    as filmed. Zoomed out, a blurred, dimmed copy fills the space around it.
+    """
+    box = layout(iw, ih, w, h, cx, cy, zoom)
+    sx, sy, sw, sh = box["source"]
+    dx, dy, dw, dh = box["dest"]
+    crop = f"crop={sw:.3f}:{sh:.3f}:{sx:.3f}:{sy:.3f}"
+    if not box["backdrop"]:
+        return ",".join([crop, *adjust, f"scale={w}:{h}:flags=lanczos"])
+    # The backdrop: the frame-filling cut of the same picture, made small,
+    # blurred and dimmed, then stretched back up (blurring it full size is slow).
+    bx, by, bw, bh = layout(iw, ih, w, h, cx, cy, 1.0)["source"]
+    small_w, small_h = max(2, _even(w / 4)), max(2, _even(h / 4))
+    sigma = max(0.5, backdrop_cfg["blur"] * w / 1080 / 4)
+    dim = backdrop_cfg["brightness"]
+    back = ",".join([f"crop={bw:.3f}:{bh:.3f}:{bx:.3f}:{by:.3f}",
+                     f"scale={small_w}:{small_h}:flags=area", *adjust,
+                     f"gblur=sigma={sigma:.2f}:steps=3", f"scale={w}:{h}:flags=bicubic",
+                     f"colorchannelmixer=rr={dim:.3f}:gg={dim:.3f}:bb={dim:.3f}"])
+    front = ",".join([crop, f"scale={dw}:{dh}:flags=lanczos", *adjust])
+    return f"split[front][back];[back]{back}[backdrop];[front]{front}[picture];" \
+           f"[backdrop][picture]overlay={dx}:{dy}"
+
+
 def _start_times(video: str) -> tuple[float, float]:
     """(when the picture starts, when the file starts) on the file's own clock."""
     result = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
@@ -179,20 +258,16 @@ def render(video: str, video_t: float, mix_path: str, mix_t: float, rate: float,
     w, h = cfg["canvas"]["width"], cfg["canvas"]["height"]
     if width is not None:
         w, h = int(width), int(round(int(width) * h / w / 2)) * 2
-    # The tallest 4:5 window the picture allows, made smaller by `zoom`, placed
-    # by cx/cy: 0 = hard left/top, 1 = hard right/bottom of the room to move.
-    aspect = f"{cfg['canvas']['width']}/{cfg['canvas']['height']}"
-    zoom = min(max(zoom, 1.0), MAX_ZOOM)
-    cw, ch = f"(ih*{aspect}/{zoom:.4f})", f"(ih/{zoom:.4f})"
-    shape = f"crop={cw}:{ch}:(iw-{cw})*{min(max(cx, 0), 1):.4f}:(ih-{ch})*{min(max(cy, 0), 1):.4f}"
-    filters = [shape]
+    adjust = []
     if abs(gain - 1.0) > 1e-3:
         # Brightness, as a gain on the footage as filmed: before the colour
         # file, which is where exposure is set on flat (log) footage.
-        filters.append(f"colorchannelmixer=rr={gain:.4f}:gg={gain:.4f}:bb={gain:.4f}")
+        adjust.append(f"colorchannelmixer=rr={gain:.4f}:gg={gain:.4f}:bb={gain:.4f}")
     if lut:
-        filters.append(f"lut3d=file={_quoted(lut)}")
-    filters += [f"scale={w}:{h}:flags=lanczos", "format=yuv420p"]
+        adjust.append(f"lut3d=file={_quoted(lut)}")
+    iw, ih = _picture_size(video)
+    filters = [_picture_filters(iw, ih, w, h, cx, cy, zoom, adjust, cfg["backdrop"]),
+               "format=yuv420p"]
     ex = cfg["export"]
     preview = width is not None
     encode = ["-c:v", "libx264", "-preset", "veryfast" if preview else ex["preset"],

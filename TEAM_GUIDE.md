@@ -26,8 +26,9 @@ album baked in as cover art. Click a track's artwork to swap in another image.
 
 ## Dive In — the mix series
 
-A 4:5 video per clip, made from the DJ's photo or the camera footage, plus a
-1:1 JPG for SoundCloud.
+A video per clip, made from the DJ's photo or the camera footage, plus a
+1:1 JPG for SoundCloud. Pick the video's shape under the viewer: 4:5 for posts,
+9:16 for Reels.
 
 1. **Mix**: drop it anywhere on the page.
 2. **Camera footage** (optional): click the box to choose the footage folder, or
@@ -38,7 +39,8 @@ A 4:5 video per clip, made from the DJ's photo or the camera footage, plus a
 4. **Clips**: click the timeline to move the playhead (the viewer shows that
    moment), then **+ Clip** (or double-click) to add a clip there. Drag a clip
    to move it. Each clip uses the footage or the photo: switch it above the
-   viewer. Drag the picture to frame it; scroll to zoom.
+   viewer. Drag the picture to frame it; scroll to zoom. Footage can zoom out
+   until the whole picture shows, with a blurred copy filling the space.
 5. **Style** on the right: the footage look and the graphics.
 6. **Preview clip** to check one with sound, then **Export**.
 

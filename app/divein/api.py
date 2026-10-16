@@ -29,7 +29,7 @@ import numpy as np
 import generate_video as gv
 from app.divein.audio import analyse, decode_excerpt
 from app.divein.compose import Scene, font_path, load_photo, missing_glyphs
-from app.divein.config import DEFAULTS, ConfigError, merge_config
+from app.divein.config import DEFAULTS, ConfigError, for_aspect, merge_config
 from app.divein.footage import FootageError, find_mix, list_videos, tidy_cache
 from app.divein.render import render_still, render_video, write_wav
 from app.divein import folders, footage_clip, transitions
@@ -335,16 +335,19 @@ class DiveInService:
     PAGE_CONTROLS = {("glyph", "mode"): "the Style buttons",
                      ("twitch", "enabled"): "the Kick twitch checkbox",
                      ("audio", "clip_seconds"): "the Clip length box",
-                     ("audio", "drive"): "the Motion buttons"}
+                     ("audio", "drive"): "the Motion buttons",
+                     ("canvas", "width"): "the 4:5 and 9:16 buttons",
+                     ("canvas", "height"): "the 4:5 and 9:16 buttons"}
 
-    def _config(self, d: dict) -> dict:
+    def _config(self, d: dict, square: bool = False) -> dict:
+        """The settings for this design: the 4:5 or 9:16 video's, or (`square`) the 1:1 JPG's."""
         overrides = d.get("overrides") or {}
         if not isinstance(overrides, dict):
             raise BadRequest("The Tuning box must contain a JSON object, like {}.")
         for (group, key), control in self.PAGE_CONTROLS.items():
             if isinstance(overrides.get(group), dict) and key in overrides[group]:
                 raise BadRequest(f"{group}.{key} is set with {control} on the page, "
-                                 f"not in Tuning. (Style, twitch and clip length live there.)")
+                                 f"not in Tuning. (Style, twitch, clip length and shape live there.)")
         if "accent" in overrides:
             raise BadRequest("accent is set with the Colour buttons on the page, not in Tuning.")
         cfg = merge_config(overrides)
@@ -366,7 +369,12 @@ class DiveInService:
             if not 0.5 <= seconds <= 120:
                 raise BadRequest("Clip length must be between 0.5 and 120 seconds.")
             cfg["audio"]["clip_seconds"] = seconds
-        return cfg
+        if square:
+            return cfg
+        try:
+            return for_aspect(cfg, str(d.get("aspect") or "4:5"))
+        except ValueError as exc:
+            raise BadRequest(str(exc))
 
     @staticmethod
     def _number(value, what: str) -> float:
@@ -475,8 +483,8 @@ class DiveInService:
             return self._draw_still(d)
 
     def _draw_still(self, d: dict):
-        cfg = self._config(d)
         fmt = "square" if d.get("format") == "square" else "portrait"
+        cfg = self._config(d, square=fmt == "square")
         scene = self._scene(d, cfg, fmt)
         analysis, frame = None, 0
         if d.get("audio") and d.get("time") is not None and fmt == "portrait":
@@ -498,8 +506,8 @@ class DiveInService:
 
     def _layers(self, d: dict) -> bytes:
         """Everything above the photo, for the page's quick drag draft."""
-        cfg = self._config(d)
         fmt = "square" if d.get("format") == "square" else "portrait"
+        cfg = self._config(d, square=fmt == "square")
         artist = str(d.get("artist", ""))
         episode = str(d.get("episode", "")).strip() or "00.00"
         key = json.dumps(["layers", artist, episode, fmt, cfg], sort_keys=True)
@@ -708,7 +716,7 @@ class DiveInService:
                          f"covers {covered}. Move it, or switch it to the photo.")
 
     def _footage_crop(self, d: dict, i: int) -> dict:
-        """Clip i's framing of the footage: position (0-1 each way) and zoom (1-2)."""
+        """Clip i's framing of the footage: position (0-1 each way) and zoom (out to the whole picture, in to 2)."""
         crops = d.get("footage_crops")
         crop = crops[i] if isinstance(crops, list) and i < len(crops) \
             and isinstance(crops[i], dict) else {}
@@ -720,7 +728,7 @@ class DiveInService:
                 value = default
             return min(max(value if math.isfinite(value) else default, low), high)
         return {"cx": number("cx", 0.5, 0, 1), "cy": number("cy", 0.5, 0, 1),
-                "zoom": number("zoom", 1.0, 1, footage_clip.MAX_ZOOM)}
+                "zoom": number("zoom", 1.0, footage_clip.MIN_ZOOM, footage_clip.MAX_ZOOM)}
 
     @staticmethod
     def _footage_look(d: dict) -> dict:
@@ -858,7 +866,7 @@ class DiveInService:
                 files.append(out)
             if has_photo and d.get("square", True):     # the 1:1 JPG is made from the photo
                 progress((steps - 1) / steps, "Making the square JPG")
-                square = self._scene(d, cfg, "square")
+                square = self._scene(d, self._config(d, square=True), "square")
                 jpg = os.path.join(folder, self._filename(d, " - square.jpg"))
                 render_still(square, jpg, cfg["square"]["jpg_quality"])
                 files.append(jpg)

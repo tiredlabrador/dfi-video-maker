@@ -108,6 +108,7 @@
           <canvas id="draft" hidden></canvas>
         </div>
         <div class="footage-frame" id="footage-frame">
+          <canvas id="footage-backdrop" hidden></canvas>
           <video id="footage" muted playsinline preload="auto"></video>
           <canvas id="graded" hidden></canvas>
           <div class="footage-grain" id="footage-grain" hidden></div>
@@ -132,8 +133,9 @@
         <button type="button" class="icon-btn" id="next-clip" title="Next clip"><svg><use href="#i-next"/></svg></button>
       </div>
       <div class="seg format-seg" role="radiogroup" aria-label="Format" id="format-choice">
-        <button type="button" role="radio" data-value="portrait" aria-checked="true">4:5 video</button>
-        <button type="button" role="radio" data-value="square" aria-checked="false">1:1 JPG</button>
+        <button type="button" role="radio" data-value="4:5" aria-checked="true" title="Instagram posts">4:5 video</button>
+        <button type="button" role="radio" data-value="9:16" aria-checked="false" title="Reels and Stories">9:16 video</button>
+        <button type="button" role="radio" data-value="square" aria-checked="false" title="The still for SoundCloud, made from the photo">1:1 JPG</button>
       </div>
     </div>
     <audio id="listen" preload="auto" hidden></audio>

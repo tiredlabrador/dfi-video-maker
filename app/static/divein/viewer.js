@@ -67,6 +67,7 @@ function updateViewer(rough = false) {
   const v = viewerTarget();
   state.viewing = v;
   $('stage').classList.toggle('is-square', state.format === 'square');
+  $('stage').classList.toggle('is-reel', state.format !== 'square' && state.aspect === '9:16');
   showFootage(v, rough);
   if (!v.at) {
     if (state.photo && v.source === 'photo') {
@@ -154,10 +155,12 @@ function updateFrameTools(v) {
   const zoom = $('frame-zoom');
   if (footage) {
     $('frame-what').textContent = `Clip ${v.clip + 1}`;
+    zoom.min = String(footageMinZoom());
     zoom.max = String(MAX_FOOTAGE_ZOOM);
     zoom.value = String(framingOf(v.clip).zoom);
   } else if (photo) {
     $('frame-what').textContent = 'Photo';
+    zoom.min = '1';
     zoom.max = '3';
     zoom.value = String(state.crop.zoom);
   }
@@ -184,25 +187,113 @@ function showFootage(v, rough = false) {
 
 const MAX_FOOTAGE_ZOOM = 2;
 
-/** Clip i's framing: cx/cy 0..1 (left/top to right/bottom), zoom 1..2. */
+/** Clip i's framing: cx/cy 0..1 (left/top to right/bottom), zoom (1 fills the frame). */
 function framingOf(i) {
   const f = state.framing[i];
   return f ? { ...f } : { cx: 0.5, cy: 0.5, zoom: 1 };
 }
 
+/** How far out the footage zooms: the whole picture just fits across the frame. */
+function footageMinZoom() {
+  const el = $('footage');
+  if (!el.videoWidth) return 1;
+  const [W, H] = canvasSize();
+  const a = W / el.videoWidth, b = H / el.videoHeight;
+  return Math.min(a, b) / Math.max(a, b);
+}
+
 /**
- * Show a clip's framing on the plain video, exactly as the export crops it:
- * object-position slides the 4:5 window along the picture, and a zoom
- * scales about the same point, so the visible part is the same window.
+ * Where the picture goes, by the export's own sums (footage_clip.layout), as
+ * fractions: source = the part of the picture used, dest = where in the frame.
+ * Zoomed out, the picture is smaller than the frame: a blurred copy fills the rest.
+ */
+function footageLayout(f) {
+  const el = $('footage');
+  const iw = el.videoWidth, ih = el.videoHeight;
+  if (!iw || !ih) return null;
+  const [W, H] = canvasSize();
+  const cover = Math.max(W / iw, H / ih);
+  const s = cover * Math.min(Math.max(f.zoom, footageMinZoom()), MAX_FOOTAGE_ZOOM);
+  const dw = Math.min(W, iw * s), dh = Math.min(H, ih * s);
+  const sw = Math.min(iw, dw / s), sh = Math.min(ih, dh / s);
+  return {
+    source: [(iw - sw) * f.cx / iw, (ih - sh) * f.cy / ih, sw / iw, sh / ih],
+    dest: [(W - dw) / 2 / W, (H - dh) / 2 / H, dw / W, dh / H],
+    backdrop: dw < W - 1 || dh < H - 1,
+  };
+}
+
+/**
+ * Show a clip's framing on the plain video, exactly as the export crops it.
+ * Zoomed in: object-position slides the window along the picture and a
+ * zoom scales about the same point. Zoomed out: the picture is placed in
+ * its smaller box, over the blurred copy.
  */
 function applyFraming(i) {
   const f = framingOf(i);
   const el = $('footage');
-  el.style.objectPosition = `${f.cx * 100}% 50%`;
+  const box = f.zoom < 1 ? footageLayout(f) : null;
+  const out = Boolean(box && box.backdrop);
+  for (const node of [el, $('graded')]) {
+    const [x, y, w, h] = out ? box.dest : [0, 0, 1, 1];
+    Object.assign(node.style, { left: `${x * 100}%`, top: `${y * 100}%`,
+                                width: `${w * 100}%`, height: `${h * 100}%` });
+  }
+  el.style.objectPosition = out ? `${f.cx * 100}% ${f.cy * 100}%` : `${f.cx * 100}% 50%`;
   el.style.transformOrigin = `${f.cx * 100}% ${f.cy * 100}%`;
   el.style.transform = f.zoom > 1 ? `scale(${f.zoom})` : '';
+  copyBehind.on = out;
+  show($('footage-backdrop'), out);
+  copyBehind.drawn = '';
   state.framedClip = i;
   grade.drawn = '';                              // the corrected picture redraws too
+}
+
+/* ── the blurred copy behind zoomed-out footage ──────────────────── */
+
+const copyBehind = { on: false, drawn: '', loop: null };
+
+/**
+ * Draw the backdrop: the frame-filling cut of the picture, small, blurred
+ * and dimmed. From the colour-corrected picture when that's showing (drawn
+ * straight after it), else from the video itself.
+ */
+function drawBackdrop(source) {
+  const el = $('footage'), c = $('footage-backdrop');
+  if (!copyBehind.on || !el.videoWidth) return;
+  const f = framingOf(state.framedClip ?? -1);
+  const full = footageLayout({ ...f, zoom: 1 });
+  const shown = footageLayout(f);
+  if (!full || !shown) return;
+  const w = Math.max(2, Math.round(c.clientWidth / 4)), h = Math.max(2, Math.round(c.clientHeight / 4));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  let [sx, sy, sw, sh] = full.source;
+  let sourceW = el.videoWidth, sourceH = el.videoHeight;
+  if (source !== el) {                           // the corrected canvas holds only the part shown
+    const [px, py, pw, ph] = shown.source;
+    [sx, sy, sw, sh] = [(sx - px) / pw, (sy - py) / ph, sw / pw, sh / ph];
+    sourceW = source.width; sourceH = source.height;
+  }
+  const sigma = setting('backdrop.blur', 40) / 1080 * w;
+  const margin = 2 * sigma;                      // blur fades at the edges: draw past them
+  const ctx = c.getContext('2d');
+  ctx.filter = `blur(${sigma}px) brightness(${setting('backdrop.brightness', 0.6)})`;
+  ctx.drawImage(source, sx * sourceW, sy * sourceH, sw * sourceW, sh * sourceH,
+                -margin, -margin, w + 2 * margin, h + 2 * margin);
+  const look = source === el ? el.style.filter : $('graded').style.filter;
+  if (c.style.filter !== look) c.style.filter = look;
+}
+
+/** While zoomed out on the plain video: redraw the backdrop on each new frame. */
+function backdropLoop(loop) {
+  if (copyBehind.loop !== loop) return;
+  const el = $('footage');
+  if (copyBehind.on && $('graded').hidden) {
+    const key = `${el.currentTime}|${el.readyState}|${state.framedClip}`
+      + `|${JSON.stringify(framingOf(state.framedClip ?? -1))}|${el.style.filter}`;
+    if (key !== copyBehind.drawn && el.readyState >= 2) { drawBackdrop(el); copyBehind.drawn = key; }
+  }
+  requestAnimationFrame(() => backdropLoop(loop));
 }
 
 function setFraming(i, change) {
@@ -210,7 +301,7 @@ function setFraming(i, change) {
   const f = { ...framingOf(i), ...change };
   f.cx = Math.min(1, Math.max(0, f.cx));
   f.cy = Math.min(1, Math.max(0, f.cy));
-  f.zoom = Math.min(MAX_FOOTAGE_ZOOM, Math.max(1, f.zoom));
+  f.zoom = Math.min(MAX_FOOTAGE_ZOOM, Math.max(footageMinZoom(), f.zoom));
   state.framing[i] = f;
   applyFraming(i);
   $('frame-zoom').value = String(f.zoom);
@@ -219,6 +310,14 @@ function setFraming(i, change) {
 
 function wireFraming() {
   const box = $('footage-frame');
+  // The picture's size decides how far out it zooms and where it sits.
+  $('footage').addEventListener('loadedmetadata', () => {
+    if (state.framedClip != null && $('stage').classList.contains('is-footage')) applyFraming(state.framedClip);
+    updateFrameTools(state.viewing || viewerTarget());
+  });
+  copyBehind.loop = {};
+  const loop = copyBehind.loop;
+  requestAnimationFrame(() => backdropLoop(loop));
   let drag = null;
   box.addEventListener('pointerdown', (e) => {
     const v = state.viewing;
@@ -344,7 +443,8 @@ async function refreshLayers() {
 }
 
 function canvasSize() {
-  return state.format === 'square' ? [1080, 1080] : [1080, 1350];
+  if (state.format === 'square') return [1080, 1080];
+  return state.aspect === '9:16' ? [1080, 1920] : [1080, 1350];
 }
 
 function prepareDraftSources() {
@@ -493,8 +593,10 @@ function designChanged(delay = 250) {
   scheduleLayers(delay);
 }
 
+/** The format buttons: the video's shape (4:5 or 9:16), or the 1:1 JPG to look at. */
 function setFormat(value) {
-  state.format = value;
+  if (value === 'square') state.format = 'square';
+  else { state.format = 'portrait'; state.aspect = value === '9:16' ? '9:16' : '4:5'; }
   clampCrop();
   show($('draft'), false);
   prepareDraftSources();

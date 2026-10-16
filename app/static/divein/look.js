@@ -52,6 +52,11 @@ function applyLook() {
   $('look-brightness-label').textContent = `${look.brightness > 0 ? '+' : ''}${look.brightness}`;
   grade.drawn = '';
   show($('footage-vignette'), look.vignette);
+  // Centred on the same part of the design as the export's, whichever shape.
+  const [, H] = canvasSize();
+  const centre = (setting('vignette.centre_y', 0.375) * 1350 + (H - 1350) / 2) / H;
+  $('footage-vignette').style.background = 'radial-gradient(ellipse farthest-corner at 50% '
+    + `${(centre * 100).toFixed(1)}%, transparent 45%, rgba(0,0,0,.65) 100%)`;
   const grain = $('footage-grain');
   show(grain, look.grain);
   if (look.grain && !grain.style.backgroundImage) grain.style.backgroundImage = grainTile();
@@ -163,15 +168,15 @@ function drawGraded() {
   gl.viewport(0, 0, w, h);
   gl.bindTexture(gl.TEXTURE_2D, grade.video);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, el);
-  // The same window as the plain video (and the export): framed, then zoomed.
-  const f = framingOf(state.framedClip ?? -1);
-  const frame = w / h, picture = el.videoWidth / el.videoHeight;
-  const uw = (picture > frame ? frame / picture : 1) / f.zoom;
-  const vh = (picture > frame ? 1 : picture / frame) / f.zoom;
+  // The same part of the picture as the plain video (and the export).
+  const box = footageLayout(framingOf(state.framedClip ?? -1));
+  if (!box) return;
+  const [sx, sy, sw, sh] = box.source;
   // The picture is uploaded upside down (FLIP_Y), so "top" is the far end.
-  gl.uniform4f(grade.crop, (1 - uw) * f.cx, (1 - vh) * (1 - f.cy), uw, vh);
+  gl.uniform4f(grade.crop, sx, 1 - sy - sh, sw, sh);
   gl.uniform1f(grade.gain, brightnessGain());       // before the colour file, as exported
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  drawBackdrop(canvas);                             // now, while the corrected frame is there
   checkGradeWorks(gl, w, h);
 }
 
