@@ -156,6 +156,32 @@ function syncNote(s, name) {
   return `${name}: the camera’s sound was too unclear to check the sync. Watch it before posting.`;
 }
 
+/**
+ * The app forgets an export (and deletes its files) when it's closed or
+ * restarted, but this page keeps showing the links. Check before following
+ * one, or the browser saves the app's "No such job" message as the file.
+ */
+async function stillThere(jobId) {
+  try {
+    const response = await fetch(`/api/divein/jobs/${jobId}`);
+    if (response.ok) return true;
+  } catch { /* the app isn't running */ }
+  show($('files'), false);
+  notify('These files are gone: the app was closed or restarted since they were made. Export again.', 'error');
+  return false;
+}
+
+/** Follow a download link only once the files are known to be there. */
+function guardDownload(link, jobId) {
+  link.addEventListener('click', async (e) => {
+    if (link.dataset.checked) { delete link.dataset.checked; return; }
+    e.preventDefault();
+    if (!(await stillThere(jobId))) return;
+    link.dataset.checked = '1';
+    link.click();
+  });
+}
+
 function showFiles(job) {
   const list = $('file-list');
   list.innerHTML = '';
@@ -176,13 +202,14 @@ function showFiles(job) {
       const play = document.createElement('button');
       play.type = 'button';
       play.textContent = 'Watch';
-      play.addEventListener('click', () => playExact(f.url));
+      play.addEventListener('click', async () => { if (await stillThere(job.id)) playExact(f.url); });
       top.append(play);
     }
     const link = document.createElement('a');
     link.href = f.url;
     link.download = f.name;
     link.textContent = 'Download';
+    guardDownload(link, job.id);
     top.append(link);
     li.append(name, top);
     const number = Number((f.name.match(/ - (\d+)\.mp4$/) || [])[1] || (f.name.endsWith('.mp4') ? 1 : 0));
@@ -195,8 +222,10 @@ function showFiles(job) {
     }
     list.append(li);
   }
-  const zip = $('zip-link');
-  if (job.zip_url) { zip.href = job.zip_url; zip.download = 'Dive In.zip'; }
+  const old = $('zip-link');
+  const zip = old.cloneNode(true);                  // drops the last export's click check
+  old.replaceWith(zip);
+  if (job.zip_url) { zip.href = job.zip_url; zip.download = 'Dive In.zip'; guardDownload(zip, job.id); }
   show(zip, Boolean(job.zip_url));
   show($('files'), true);
 }
