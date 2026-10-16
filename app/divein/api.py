@@ -32,7 +32,7 @@ from app.divein.compose import Scene, font_path, load_photo, missing_glyphs
 from app.divein.config import DEFAULTS, ConfigError, merge_config
 from app.divein.footage import FootageError, find_mix, list_videos, tidy_cache
 from app.divein.render import render_still, render_video, write_wav
-from app.divein import footage_clip, transitions
+from app.divein import folders, footage_clip, transitions
 from app.divein.footage_look import OPTIONS as LOOK_OPTIONS, FootageLook
 
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024 * 1024        # 3GB: any mix, any format
@@ -207,6 +207,11 @@ class DiveInService:
                 payload = self._read_json(h)
                 job = self._start(payload, preview=path.endswith("preview"))
                 return h._json(202, self._job_payload(job))
+            if method == "POST" and path == "/api/divein/choose-folder":
+                start = str(self._read_json(h).get("start") or "") or None
+                return h._json(200, {"folder": folders.choose_folder(start)})
+            if method == "POST" and path == "/api/divein/locate-folder":
+                return self._locate_folder(h)
             if method == "POST" and path == "/api/divein/footage":
                 return h._json(202, self._job_payload(self._find_footage(self._read_json(h))))
             return h._error(404, "Not found.")
@@ -825,6 +830,17 @@ class DiveInService:
         self._files[job.id] = []
         self._footage_jobs.add(job.id)
         return job
+
+    def _locate_folder(self, h):
+        """Where a folder dropped on the page lives: the browser only gives its name and contents."""
+        d = self._read_json(h)
+        files = d.get("files") if isinstance(d.get("files"), list) else []
+        files = [{"name": str(f.get("name")), "size": int(f.get("size", -1))}
+                 for f in files[:20] if isinstance(f, dict) and f.get("name")]
+        folder = folders.locate_folder(str(d.get("name") or "") or None, files)
+        if not folder:
+            return h._error(404, "Couldn't find that folder on this Mac. Click the box to choose it instead.")
+        return h._json(200, {"folder": folder})
 
     def _footage_video(self, h):
         """One of the searched videos, by number, for the page to play."""

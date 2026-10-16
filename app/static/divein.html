@@ -52,13 +52,17 @@
 
     <section class="section">
       <div class="section-head"><h2>Camera footage</h2><span class="tag">optional</span></div>
-      <div class="row">
-        <input type="text" class="input" id="footage-folder" placeholder="The footage folder’s location" aria-label="Footage folder"
-               autocomplete="off" spellcheck="false"
-               title="In Finder, right-click the folder, hold Option, and choose Copy as Pathname">
-        <button type="button" class="btn btn--small btn--ghost" id="footage-btn">Find</button>
-      </div>
+      <button type="button" class="filecard" id="footage-drop">
+        <span class="thumb"><svg><use href="#i-film"/></svg></span>
+        <span class="what"><span class="name" id="footage-label">Choose the footage folder</span>
+          <span class="sub" id="footage-hint">or drop it anywhere</span></span>
+      </button>
+      <input type="hidden" id="footage-folder">
       <p class="small muted footage-status" id="footage-status"></p>
+      <div class="footage-actions" id="footage-actions" hidden>
+        <button type="button" class="link" id="footage-btn" title="Look through the folder again, e.g. after plugging the drive back in">Look again</button>
+        <button type="button" class="link" id="footage-clear">Remove</button>
+      </div>
       <label class="switch" id="lut-row" hidden>D-Log colour fix<input type="checkbox" id="lut-on" checked></label>
     </section>
 

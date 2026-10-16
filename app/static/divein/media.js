@@ -78,7 +78,7 @@ let footagePolling = null;
 async function findFootage(quiet = false) {
   if (!state.audio) { if (!quiet) setError('Choose the mix first.'); return; }
   const folder = $('footage-folder').value.trim();
-  if (!folder) { if (!quiet) setError('Paste the footage folder’s location first.'); return; }
+  if (!folder) { if (!quiet) setError('Choose the footage folder first.'); return; }
   save();
   const token = state.audio.token;
   state.footage = null;                   // the old strip belongs to the old folder
@@ -104,7 +104,8 @@ async function findFootage(quiet = false) {
   footagePolling = setInterval(async () => {
     let s;
     try { s = await (await fetch(`/api/divein/jobs/${job.id}`)).json(); } catch { return; }
-    const current = state.audio && state.audio.token === token;
+    const current = state.audio && state.audio.token === token
+      && $('footage-folder').value.trim() === folder;     // not since removed or replaced
     if (s.status !== 'done' && s.status !== 'error') {
       if (current) status.textContent = `${s.message || 'Listening'}…`;
       return;
@@ -126,6 +127,103 @@ async function findFootage(quiet = false) {
     updateViewer();
     refreshExport();
   }, 400);
+}
+
+const VIDEO_FILE = /\.(mp4|mov)$/i;
+
+/** Show the chosen folder (or none) on the footage box. */
+function showFolder(path) {
+  $('footage-folder').value = path || '';
+  const parts = (path || '').split('/').filter(Boolean);
+  const where = parts.slice(parts[0] === 'Volumes' ? 1 : 0, -1).join(' › ');
+  $('footage-label').textContent = parts.length ? parts[parts.length - 1] : 'Choose the footage folder';
+  $('footage-hint').textContent = parts.length ? (where || '/') : 'or drop it anywhere';
+  $('footage-drop').title = path || 'Click to choose the folder, or drop it anywhere on this page';
+  $('footage-drop').classList.toggle('is-set', Boolean(path));
+  show($('footage-actions'), Boolean(path));
+}
+
+/** A folder was chosen or dropped: remember it, and look for the mix in it. */
+function useFolder(path) {
+  showFolder(path);
+  save();
+  if (state.audio) findFootage();
+  else $('footage-status').textContent = 'Now choose the mix: it’s looked for in this footage.';
+}
+
+function removeFolder() {
+  clearInterval(footagePolling);
+  $('footage-btn').disabled = false;
+  showFolder('');
+  save();
+  state.footage = null;
+  show($('lut-row'), false);
+  $('footage-status').textContent = '';
+  renderChips();
+  drawTimeline();
+  updateViewer();
+  refreshExport();
+}
+
+/** Click the box: the Mac's own folder chooser opens (the app runs on this Mac). */
+let choosing = false;
+async function chooseFolder() {
+  if (choosing) return;
+  choosing = true;
+  const hint = $('footage-hint');
+  const before = hint.textContent;
+  hint.textContent = 'Choose it in the window that just opened…';
+  try {
+    const { folder } = await (await postJSON('/api/divein/choose-folder',
+      { start: $('footage-folder').value })).json();
+    if (folder) useFolder(folder); else hint.textContent = before;
+  } catch (error) {
+    hint.textContent = before;
+    setError(error.message);
+  } finally {
+    choosing = false;
+  }
+}
+
+/**
+ * A browser never says where a dropped folder lives, only its name and what's
+ * in it. So the app looks on this Mac's drives for that folder with those
+ * exact videos (sizes to the byte).
+ */
+async function locateDropped(name, videos) {
+  $('footage-label').textContent = name || 'Footage';
+  $('footage-hint').textContent = 'Finding it on this Mac…';
+  try {
+    const { folder } = await (await postJSON('/api/divein/locate-folder', {
+      name, files: videos.map((f) => ({ name: f.name, size: f.size })),
+    })).json();
+    useFolder(folder);
+  } catch (error) {
+    showFolder($('footage-folder').value);
+    setError(error.message);
+  }
+}
+
+async function dropFolder(entry) {
+  let videos;
+  try {
+    const reader = entry.createReader();
+    const entries = [];
+    for (;;) {                            // handed over a hundred or so at a time
+      const batch = await new Promise((ok, fail) => reader.readEntries(ok, fail));
+      if (!batch.length) break;
+      entries.push(...batch);
+    }
+    videos = await Promise.all(entries
+      .filter((e) => e.isFile && !e.name.startsWith('.') && VIDEO_FILE.test(e.name))
+      .slice(0, 6)
+      .map((e) => new Promise((ok, fail) => e.file(ok, fail))));
+  } catch {
+    setError('Couldn’t read that folder.');
+    return;
+  }
+  if (!videos.length) { setError('That folder has no videos in it (MP4 or MOV).'); return; }
+  locateDropped(entry.name, videos);
 }
 
 function footageSummary(found) {
@@ -201,13 +299,16 @@ function wireMedia() {
     e.preventDefault();
     depth = 0;
     $('stage').classList.remove('is-over');
+    // A folder, or some videos: the camera footage. Read now: the drop's
+    // contents can't be read once this handler returns.
     const entry = e.dataTransfer?.items?.[0]?.webkitGetAsEntry?.();
-    if (entry && entry.isDirectory) {
-      notify('That’s a folder. For camera footage, paste its location under Camera footage '
-        + '(in Finder: right-click it, hold Option, Copy as Pathname).', 'warn');
+    if (entry && entry.isDirectory) { dropFolder(entry); return; }
+    const files = [...(e.dataTransfer?.files || [])];
+    if (files.length && files.every((f) => VIDEO_FILE.test(f.name))) {
+      locateDropped(null, files.slice(0, 6));
       return;
     }
-    useDroppedFile(e.dataTransfer?.files?.[0]);
+    useDroppedFile(files[0]);
   });
   document.addEventListener('paste', (e) => {           // paste a photo from anywhere...
     const items = [...(e.clipboardData?.items || [])];
@@ -217,8 +318,9 @@ function wireMedia() {
     const item = items.find((i) => i.type.startsWith('image/'));
     if (item) { e.preventDefault(); usePhoto(item.getAsFile()); }
   });
+  $('footage-drop').addEventListener('click', chooseFolder);
   $('footage-btn').addEventListener('click', () => findFootage());
-  $('footage-folder').addEventListener('keydown', (e) => { if (e.key === 'Enter') findFootage(); });
+  $('footage-clear').addEventListener('click', removeFolder);
 }
 
 /* ── remembering the session ─────────────────────────────────────── */

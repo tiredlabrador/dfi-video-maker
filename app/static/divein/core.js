@@ -218,7 +218,7 @@ function restore() {
   $('rings-on').checked = saved.rings ?? true;
   $('twitch').checked = saved.twitch ?? true;
   $('overrides').value = saved.overrides ?? '{}';
-  $('footage-folder').value = saved.footage_folder ?? '';
+  showFolder(saved.footage_folder ?? '');
   for (const [k, on] of Object.entries(saved.footage_look || {})) {
     if (k === 'brightness') $('look-brightness').value = String(Number(on) || 0);
     else if ($(`look-${k}`)) $(`look-${k}`).setAttribute('aria-pressed', String(Boolean(on)));

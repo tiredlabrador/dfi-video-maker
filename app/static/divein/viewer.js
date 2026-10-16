@@ -123,7 +123,7 @@ function explainEmpty(v) {
     text = 'Choose a photo on the left.';
   } else if (state.audio && !state.footage && !state.photo) {
     title = 'Find the footage, or add a photo';
-    text = 'Paste the camera footage’s folder on the left, or choose a photo.';
+    text = 'Drop the camera footage’s folder anywhere on this page, or choose a photo.';
   } else if (state.audio && v.clip >= 0 && clipFilmed(v.clip)) {
     title = `Clip ${v.clip + 1} is set to the photo`;
     text = 'Choose a photo on the left, or switch the clip to Footage.';

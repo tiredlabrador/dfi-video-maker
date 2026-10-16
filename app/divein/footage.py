@@ -50,7 +50,7 @@ def list_videos(folder: str) -> list[str]:
     """The videos in `folder` (not its subfolders), in name order."""
     folder = (folder or "").strip()
     if not folder:
-        raise FootageError("Type or paste the footage folder's location first.")
+        raise FootageError("Choose the footage folder first.")
     folder = os.path.expanduser(folder)
     if not os.path.isdir(folder):
         raise FootageError("Couldn't find that folder. Is the drive plugged in?")

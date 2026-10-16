@@ -30,8 +30,9 @@ A 4:5 video per clip, made from the DJ's photo or the camera footage, plus a
 1:1 JPG for SoundCloud.
 
 1. **Mix**: drop it anywhere on the page.
-2. **Camera footage** (optional): paste the footage folder's location and press
-   **Find**. The white strip on the timeline shows what was filmed.
+2. **Camera footage** (optional): click the box to choose the footage folder, or
+   drop the folder anywhere on the page. The white strip on the timeline shows
+   what was filmed.
 3. **Photo** (optional): for photo clips and the JPG. **Details**: the artist's
    name and the episode, e.g. `02.01`.
 4. **Clips**: click the timeline to move the playhead (the viewer shows that

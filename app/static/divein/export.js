@@ -51,8 +51,8 @@ function renderExportList() {
     blocked = state.audio ? 'Add a clip first: double-click the timeline, or press “+ Clip”.'
       : 'Choose the mix first.';
   } else if (footageMissing() && state.starts.some((_, i) => state.sources[i] !== 'photo')) {
-    blocked = 'The footage isn’t loaded (is the drive plugged in?). Press Find, '
-      + 'or clear the footage folder to make photo clips.';
+    blocked = 'The footage isn’t loaded (is the drive plugged in?). Press Look again '
+      + 'under Camera footage, or Remove the footage to make photo clips.';
   }
   const square = $('export-square');
   square.disabled = !state.photo;
@@ -105,7 +105,7 @@ function previewClip() {
   if (!state.audio) { setError('Choose the mix first.'); return; }
   if (!state.starts.length) { setError('Add a clip first: double-click the timeline, or press “+ Clip”.'); return; }
   if (footageMissing() && state.sources[clip] !== 'photo') {
-    setError('The footage isn’t loaded (is the drive plugged in?). Press Find first.');
+    setError('The footage isn’t loaded (is the drive plugged in?). Press Look again under Camera footage.');
     return;
   }
   if (clipSource(clip) === 'photo' && !state.photo) {
