@@ -595,11 +595,36 @@ function wirePhotoDrag() {
   }, { passive: false });
 }
 
-/** The design itself changed (not just the framing): redraw both. */
+/** The design itself changed (not just the framing): redraw both, and the graphics over the footage. */
 function designChanged(delay = 250) {
   save();
   scheduleStill(delay);
   scheduleLayers(delay);
+  scheduleFootageGraphics(delay);
+}
+
+/* ── the graphics over the live footage (the rings shown at rest) ── */
+
+let footageGraphicsSeq = 0;
+let footageGraphicsTimer = null;
+
+function scheduleFootageGraphics(delay = 150) {
+  clearTimeout(footageGraphicsTimer);
+  footageGraphicsTimer = setTimeout(refreshFootageGraphics, delay);
+}
+
+async function refreshFootageGraphics() {
+  const seq = ++footageGraphicsSeq;
+  const img = $('footage-graphics');
+  try {
+    const response = await postJSON('/api/divein/layers', design({ format: 'portrait', footage: true }));
+    const blob = await response.blob();
+    if (seq !== footageGraphicsSeq) return;
+    const old = img.src;
+    img.src = URL.createObjectURL(blob);
+    if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+    show(img, true);
+  } catch { show(img, false); }
 }
 
 /** The format buttons: the video's shape (4:5 or 9:16), or the 1:1 JPG to look at. */

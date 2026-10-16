@@ -44,6 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
     save(); renderChips(); drawTimeline(); updateViewer(); refreshExport(); saveSession();
   });
   $('twitch').addEventListener('change', () => designChanged(0));
+  for (const piece of ['logo', 'tape', 'name']) $(`${piece}-on`).addEventListener('change', () => designChanged(0));
   $('rings-on').addEventListener('change', () => { showMotionOptions(); designChanged(0); });
   $('apply-overrides').addEventListener('click', () => {
     try {
@@ -60,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   applyLook();
+  scheduleFootageGraphics(0);
   renderChips();
   drawTimeline();
   updateViewer();

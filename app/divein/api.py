@@ -33,7 +33,7 @@ from app.divein.config import DEFAULTS, ConfigError, for_aspect, merge_config
 from app.divein.footage import FootageError, find_mix, list_videos, tidy_cache
 from app.divein.render import render_still, render_video, write_wav
 from app.divein import folders, footage_clip, transitions
-from app.divein.footage_look import OPTIONS as LOOK_OPTIONS, FootageLook
+from app.divein.footage_look import OPTIONS as LOOK_OPTIONS, FootageLook, Graphics
 
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024 * 1024        # 3GB: any mix, any format
 CHUNK = 1024 * 1024
@@ -336,6 +336,9 @@ class DiveInService:
                      ("twitch", "enabled"): "the Kick twitch checkbox",
                      ("audio", "clip_seconds"): "the Clip length box",
                      ("audio", "drive"): "the Motion buttons",
+                     ("logo", "enabled"): "the Logo switch",
+                     ("tape", "enabled"): "the Tape switch",
+                     ("name", "enabled"): "the Name switch",
                      ("canvas", "width"): "the 4:5 and 9:16 buttons",
                      ("canvas", "height"): "the 4:5 and 9:16 buttons"}
 
@@ -360,6 +363,9 @@ class DiveInService:
             raise BadRequest("The coil is either rings or none.")
         cfg["glyph"]["mode"] = mode
         cfg["twitch"]["enabled"] = bool(d.get("twitch", cfg["twitch"]["enabled"]))
+        graphics = d.get("graphics") if isinstance(d.get("graphics"), dict) else {}
+        for piece in ("logo", "tape", "name"):
+            cfg[piece]["enabled"] = bool(graphics.get(piece, True))
         motion = d.get("motion", cfg["audio"]["drive"])
         if motion not in ("kicks", "level"):
             raise BadRequest("Motion must follow kicks or level.")
@@ -510,10 +516,11 @@ class DiveInService:
         cfg = self._config(d, square=fmt == "square")
         artist = str(d.get("artist", ""))
         episode = str(d.get("episode", "")).strip() or "00.00"
-        key = json.dumps(["layers", artist, episode, fmt, cfg], sort_keys=True)
+        footage = bool(d.get("footage"))                # footage has its own Dark edges switch
+        key = json.dumps(["layers", artist, episode, fmt, footage, cfg], sort_keys=True)
         def make():
             buffer = io.BytesIO()
-            Scene(cfg, None, artist, episode, fmt=fmt).layers().save(buffer, "PNG")
+            Scene(cfg, None, artist, episode, fmt=fmt).layers(vignette=not footage).save(buffer, "PNG")
             return buffer.getvalue()
         return self._layer_cache.get_or(key, make)
 
@@ -749,17 +756,25 @@ class DiveInService:
         return 1.0 + min(max(value, -100.0), 100.0) / 100.0
 
     def _look_maker(self, d, cfg, mix, start, seconds, fps):
-        """Makes the look for a clip's frames, or None if every part is off."""
+        """Makes the look and graphics for a clip's frames, or None if every part is off."""
         options = self._footage_look(d)
-        if not any(options.values()):
+        rings = cfg["glyph"]["mode"] == "rings"
+        graphics = rings or any(cfg[p]["enabled"] for p in ("logo", "tape", "name"))
+        if not any(options.values()) and not graphics:
             return None
         episode = str(d.get("episode", "")).strip() or "00.00"
         analysis = None
-        if options["ghost"] and cfg["twitch"]["enabled"]:
-            # The ghost jumps on the hits, found exactly as for the photo clips.
+        if rings or (options["ghost"] and cfg["twitch"]["enabled"]):
+            # The rings move with the music, and the ghost jumps on the hits,
+            # found exactly as for the photo clips.
             sr = cfg["audio"]["sample_rate"]
             analysis = analyse(decode_excerpt(mix, start, seconds, sr), sr, fps, cfg, episode)
-        return lambda w, h: FootageLook(cfg, episode, w, h, options, analysis)
+        scene = Scene(cfg, None, str(d.get("artist", "")), episode) if graphics else None
+
+        def make(w, h):
+            drawn = Graphics(scene, w, h, analysis) if scene is not None else None
+            return FootageLook(cfg, episode, w, h, options, analysis, graphics=drawn)
+        return make
 
     def _footage_clip(self, d, cfg, match, video, start, seconds, out, width=None,
                       progress=None, crop=None) -> dict:

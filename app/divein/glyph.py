@@ -87,11 +87,15 @@ class Glyph:
         gap = round(float(state["gap"]) / GAP_STEP) * GAP_STEP
         glow_t = round(float(np.clip(state.get("glow", 0.0), 0, 1)) * 40) / 40
         key = (gap, glow_t)
-        if key not in self._drawn:
+        # Safe to call from several threads at once: the drawing is the same
+        # whoever draws it, and a cache cleared meanwhile can't lose it.
+        drawn = self._drawn.get(key)
+        if drawn is None:
+            drawn = self._draw(gap, glow_t)
             if len(self._drawn) > 400:
                 self._drawn.clear()
-            self._drawn[key] = self._draw(gap, glow_t)
-        return self._drawn[key]
+            self._drawn[key] = drawn
+        return drawn
 
     def _draw(self, gap: float, t: float):
         s = self.g["scale"]

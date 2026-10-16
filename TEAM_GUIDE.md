@@ -41,7 +41,7 @@ A video per clip, made from the DJ's photo or the camera footage, plus a
    to move it. Each clip uses the footage or the photo: switch it above the
    viewer. Drag the picture to frame it; scroll to zoom. Footage can zoom out
    until the whole picture shows, with a blurred copy filling the space.
-5. **Style** on the right: the footage look and the graphics.
+5. **Style** on the right: the footage look, and the graphics on every clip (switch the logo, tape, name and rings on or off).
 6. **Preview clip** to check one with sound, then **Export**.
 
 Keys: Space plays and pauses; ← → nudge the clip (Shift: 5 seconds); A adds a

@@ -361,14 +361,14 @@ class Scene:
         lg = self.cfg["logo"]
         name, box = LOGO_SOURCE
         source = os.path.join(ASSETS, name)
-        if os.path.exists(source):
+        if lg.get("enabled", True) and os.path.exists(source):
             logo = Image.open(source).convert("RGBA").crop(box)
             height = round(logo.height * lg["width"] / logo.width)
             logo = logo.resize((int(lg["width"]), height), Image.LANCZOS)
             overlay.alpha_composite(logo, (int(lg["x"]), int(lg["y"])))
 
         n = self.cfg["name"]
-        lines, size = layout_name(artist, self.cfg)
+        lines, size = layout_name(artist, self.cfg) if n.get("enabled", True) else ([], 0)
         if lines:
             font = _font(n["font"], size)
             gap = n["line_gap"] * size / n["font_size"]
@@ -515,7 +515,7 @@ class Scene:
             self._hole_tile = (Image.fromarray(tile, "RGBA"), (x, y))
         return self._hole_tile
 
-    def layers(self) -> Image.Image:
+    def layers(self, vignette: bool = True) -> Image.Image:
         """
         Everything above the photo, as one transparent image: vignette, tape,
         logo, name and the glyph (or hole) at rest. The page lays this over the
@@ -524,7 +524,8 @@ class Scene:
         cfg = self.cfg
         out = np.zeros((self.H, self.W, 4), dtype=np.float32)
         # Vignette: black at the darkening amount (same maths as multiplying).
-        out[..., 3] = 1.0 - self._vignette
+        if vignette:
+            out[..., 3] = 1.0 - self._vignette
         def over(rgb, alpha):
             a = alpha[..., None]
             out_a = out[..., 3:4]

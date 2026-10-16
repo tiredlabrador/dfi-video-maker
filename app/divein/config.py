@@ -44,7 +44,7 @@ DEFAULTS: dict = {
                  "inner": 0.45, "edge_alpha": 0.65},
 
     # Layer 5: the DFI logo, the same size and place as in The Dig.
-    "logo": {"x": 49, "y": 66, "width": 170},
+    "logo": {"enabled": True, "x": 49, "y": 66, "width": 170},
 
     # Layer 7: hazard tape. `angle` is degrees, rising to the right.
     # `texture_*` reproduce R1, where the tape is a duller, grainy yellow rather
@@ -57,7 +57,7 @@ DEFAULTS: dict = {
 
     # Layer 8: artist name, bottom-left, up to two lines, bottom-anchored.
     # `x` is where the ink starts: the same 49px margin as the logo.
-    "name": {"font": "SquidBoyV4-Regular.otf", "font_size": 152, "x": 49,
+    "name": {"enabled": True, "font": "SquidBoyV4-Regular.otf", "font_size": 152, "x": 49,
              "last_baseline": 1278, "line_gap": 132, "max_width": 990,
              "min_font_size": 80},
 

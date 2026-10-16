@@ -775,3 +775,16 @@ def test_an_unknown_shape_is_refused(server, media):
     with pytest.raises(urllib.error.HTTPError) as caught:
         post_json(server, "/api/divein/still", design(p, aspect="21:9"), raw=True)
     assert caught.value.code == 400
+
+
+def test_the_graphics_over_footage_come_without_the_photos_darkened_edges(server, media):
+    """Footage has its own Dark edges switch; the page lays the graphics over it live."""
+    from PIL import Image
+    _, photo = media
+    p = raw_upload(server, "photo", "dj.jpg", photo)["token"]
+    edges = Image.open(io.BytesIO(post_json(server, "/api/divein/layers", design(p), raw=True).read()))
+    bare = Image.open(io.BytesIO(post_json(server, "/api/divein/layers",
+                                           design(p, footage=True), raw=True).read()))
+    assert np.asarray(edges)[1340, 5, 3] > 50         # the photo's: dark in the corner
+    assert np.asarray(bare)[1340, 5, 3] == 0          # the footage's: nothing there
+    assert np.asarray(bare)[754, 540, 3] > 200        # but the tape is

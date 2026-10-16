@@ -64,6 +64,7 @@ body.divein { display: flex; flex-direction: column; height: 100vh; overflow: hi
 /* left/top/width/height are set when zoomed out smaller than the frame. */
 #footage { position: absolute; left: 0; top: 0; display: block; width: 100%; height: 100%; object-fit: cover; }
 #graded { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+.footage-graphics { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 #footage-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .footage-vignette, .footage-grain { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 /* A live stand-in for the export's look: the export draws it exactly. */

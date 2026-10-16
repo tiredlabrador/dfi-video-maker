@@ -114,9 +114,15 @@ def found(server, shoot, folder="Camera"):
 PLAIN = {"bw": False, "contrast": False, "grain": False, "vignette": False, "ghost": False}
 
 
+GRAPHICS_OFF = {"logo": False, "tape": False, "name": False}
+GRAPHICS_ON = {"logo": True, "tape": True, "name": True}
+
+
 def design(token, **kw):
+    """Graphics off unless a test asks: most tests here measure the footage itself."""
     d = {"audio": token, "artist": "Artist", "episode": "02.01", "starts": [27.0],
-         "clip_seconds": 6, "sources": ["video"], "overrides": {}}
+         "clip_seconds": 6, "sources": ["video"], "overrides": {},
+         "graphics": GRAPHICS_OFF, "glyph": "none"}
     d.update(kw)
     return d
 
@@ -547,6 +553,80 @@ def test_zoomed_out_footage_keeps_the_sync(server, shoot, tmp_path):
     token = found(server, shoot)
     _, job = call(server, "/api/divein/export",
                   design(token, aspect="9:16", footage_crops=[{"cx": 0.5, "cy": 0.5, "zoom": 0.4}]))
+    job = finished(server, job["id"])
+    assert job["status"] == "done", job.get("error")
+    assert job["sync"][0]["in_sync"], job["sync"]
+
+
+# ── graphics on footage ──────────────────────────────────────────────────
+def colour_at(path, w, h, x, y, at=1.0):
+    """The (r, g, b) at (x, y) of the frame `at` seconds in, scaled to w x h."""
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(at), "-i", str(path), "-frames:v", "1",
+                          "-vf", f"scale={w}:{h}", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"],
+                         capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.uint8).reshape(h, w, 3)[y, x].astype(int)
+
+
+def yellow(rgb):
+    """Tinted yellow: the footage here is grey, so any yellow is the tape or the rings."""
+    r, g, b = rgb
+    return r - b > 35 and g - b > 35
+
+
+def exported(server, token, tmp_path, look=PLAIN, **kw):
+    _, job = call(server, "/api/divein/export", design(token, footage_look=look, **kw))
+    job = finished(server, job["id"])
+    assert job["status"] == "done", job.get("error")
+    clip = tmp_path / f"clip{len(list(tmp_path.iterdir()))}.mp4"
+    clip.write_bytes(download(server, job, ".mp4"))
+    return clip
+
+
+@pytest.mark.parametrize("aspect, height", [("4:5", 1350), ("9:16", 1920)])
+def test_footage_clips_get_the_tape_where_the_photo_clips_have_it(server, stripes, tmp_path,
+                                                                   aspect, height):
+    token = found(server, stripes)
+    tape_y = 754 + (height - 1350) // 2
+    on = exported(server, token, tmp_path, aspect=aspect, graphics=GRAPHICS_ON)
+    off = exported(server, token, tmp_path, aspect=aspect, glyph="none", graphics=GRAPHICS_OFF)
+    assert yellow(colour_at(on, 108, height // 10, 54, tape_y // 10))
+    assert not yellow(colour_at(off, 108, height // 10, 54, tape_y // 10))
+
+
+def test_the_tape_stays_yellow_on_black_and_white_footage(server, stripes, tmp_path):
+    """The graphics go on top of the look, as on the photo clips."""
+    token = found(server, stripes)
+    clip = exported(server, token, tmp_path, look={**PLAIN, "bw": True, "grain": True},
+                    graphics=GRAPHICS_ON)
+    assert yellow(colour_at(clip, 108, 135, 54, 75))
+
+
+def test_footage_clips_get_the_rings_on_their_own(server, stripes, tmp_path):
+    token = found(server, stripes)
+    clip = exported(server, token, tmp_path, glyph="rings", graphics=GRAPHICS_OFF)
+    # Somewhere in the coil's box, top right, there's the accent colour.
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1", "-i", str(clip), "-frames:v", "1",
+                          "-vf", "crop=180:110:890:50", "-pix_fmt", "rgb24", "-f", "rawvideo",
+                          "pipe:1"], capture_output=True, check=True).stdout
+    box = np.frombuffer(raw, np.uint8).reshape(-1, 3).astype(int)
+    assert any(yellow(p) for p in box[::7])
+
+
+def test_the_preview_of_a_footage_clip_has_the_graphics_too(server, stripes, tmp_path):
+    token = found(server, stripes)
+    _, job = call(server, "/api/divein/preview",
+                  design(token, footage_look=PLAIN, graphics=GRAPHICS_ON, preview_index=0))
+    job = finished(server, job["id"])
+    assert job["status"] == "done", job.get("error")
+    clip = tmp_path / "preview.mp4"
+    clip.write_bytes(download(server, job, ".mp4"))
+    assert yellow(colour_at(clip, 108, 135, 54, 75))
+
+
+def test_graphics_on_footage_keep_the_sync(server, shoot, tmp_path):
+    token = found(server, shoot)
+    _, job = call(server, "/api/divein/export",
+                  design(token, footage_look=PLAIN, graphics=GRAPHICS_ON, glyph="rings"))
     job = finished(server, job["id"])
     assert job["status"] == "done", job.get("error")
     assert job["sync"][0]["in_sync"], job["sync"]

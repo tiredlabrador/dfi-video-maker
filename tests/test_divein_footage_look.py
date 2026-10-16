@@ -101,3 +101,24 @@ def test_frames_drawn_at_the_same_time_come_out_exactly_as_one_at_a_time():
     with ThreadPoolExecutor(6) as pool:
         together = list(pool.map(lambda f: parallel.frame(f, frames[f % 6]), range(39, -1, -1)))[::-1]
     assert all(np.array_equal(a, b) for a, b in zip(one_by_one, together))
+
+
+def test_graphics_drawn_at_the_same_time_come_out_exactly_as_one_at_a_time():
+    """The tape's texture and the moving rings mustn't depend on which thread drew them."""
+    from concurrent.futures import ThreadPoolExecutor
+    from app.divein.compose import Scene
+    from app.divein.footage_look import FootageLook, Graphics
+    cfg = merge_config({})
+    gaps = np.r_[np.zeros(20), np.linspace(0, 1, 20)]
+    analysis = {"twitch_x": np.zeros(40), "twitch_y": np.zeros(40), "gap": gaps, "glow": gaps}
+    scene = Scene(cfg, None, "Artist", "02.01")
+    frames = [(np.random.default_rng(i).random((H, W, 3)) * 255).astype(np.uint8) for i in range(4)]
+
+    def made():
+        return FootageLook(cfg, "02.01", W, H, ALL, analysis, graphics=Graphics(scene, W, H, analysis))
+    serial = made()
+    one_by_one = [serial.frame(f, frames[f % 4]) for f in range(40)]
+    parallel = made()
+    with ThreadPoolExecutor(8) as pool:
+        together = list(pool.map(lambda f: parallel.frame(f, frames[f % 4]), range(39, -1, -1)))[::-1]
+    assert all(np.array_equal(a, b) for a, b in zip(one_by_one, together))

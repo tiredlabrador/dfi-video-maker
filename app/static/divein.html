@@ -113,6 +113,7 @@
           <canvas id="graded" hidden></canvas>
           <div class="footage-grain" id="footage-grain" hidden></div>
           <div class="footage-vignette" id="footage-vignette" hidden></div>
+          <img class="footage-graphics" id="footage-graphics" alt="" hidden src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
         </div>
         <video id="player" controls playsinline hidden></video>
         <div class="exact-bar" id="exact-bar" hidden>Rendered preview <button type="button" class="icon-btn" id="exact-close" title="Back to the live view"><svg><use href="#i-close"/></svg></button></div>
@@ -162,7 +163,10 @@
     </section>
 
     <section class="section">
-      <div class="section-head"><h2>Graphics</h2><span class="tag">photo clips</span></div>
+      <div class="section-head"><h2>Graphics</h2><span class="tag">every clip</span></div>
+      <label class="switch">Logo<input type="checkbox" id="logo-on" checked></label>
+      <label class="switch" title="The hazard tape with the series and episode">Tape<input type="checkbox" id="tape-on" checked></label>
+      <label class="switch" title="The artist's name, bottom left">Name<input type="checkbox" id="name-on" checked></label>
       <div class="seg swatches" role="radiogroup" aria-label="Colour" id="colour-choice">
         <button type="button" role="radio" data-value="yellow" aria-checked="true" title="Yellow"><i style="background:#fffe01"></i></button>
         <button type="button" role="radio" data-value="red" aria-checked="false" title="Red"><i style="background:#ea2020"></i></button>

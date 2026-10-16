@@ -160,6 +160,7 @@ function design(extra = {}) {
     colour: state.colour,
     motion: state.motion,
     twitch: $('twitch').checked,
+    graphics: { logo: $('logo-on').checked, tape: $('tape-on').checked, name: $('name-on').checked },
     overrides: state.overrides,
     sources: state.starts.map((_, i) => clipSource(i)),
     footage_crops: state.starts.map((_, i) => framingOf(i)),
@@ -205,6 +206,7 @@ function save() {
       // Saved under a new name: an older saved 'kicks' predates Volume
       // becoming the default, so it's left behind rather than carried over.
       colour: state.colour, rings_follow: state.motion, twitch: $('twitch').checked,
+      logo: $('logo-on').checked, tape: $('tape-on').checked, name: $('name-on').checked,
       overrides: $('overrides').value, footage_folder: $('footage-folder').value,
       footage_look: footageLook(), aspect: state.aspect,
     }));
@@ -220,6 +222,7 @@ function restore() {
   $('clip-seconds').value = saved.clip ?? 25;
   $('rings-on').checked = saved.rings ?? true;
   $('twitch').checked = saved.twitch ?? true;
+  for (const piece of ['logo', 'tape', 'name']) $(`${piece}-on`).checked = saved[piece] ?? true;
   $('overrides').value = saved.overrides ?? '{}';
   showFolder(saved.footage_folder ?? '');
   for (const [k, on] of Object.entries(saved.footage_look || {})) {
