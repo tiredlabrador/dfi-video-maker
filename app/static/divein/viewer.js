@@ -188,10 +188,13 @@ function showFootage(v, rough = false) {
 
 const MAX_FOOTAGE_ZOOM = 2;
 
-/** Clip i's framing: cx/cy 0..1 (left/top to right/bottom), zoom (1 fills the frame). */
+/**
+ * Clip i's framing: cx/cy 0..1 (left/top to right/bottom), each clip its own;
+ * zoom (1 fills the frame), the same for every clip.
+ */
 function framingOf(i) {
   const f = state.framing[i];
-  return f ? { ...f } : { cx: 0.5, cy: 0.5, zoom: 1 };
+  return { cx: f ? f.cx : 0.5, cy: f ? f.cy : 0.5, zoom: state.footageZoom };
 }
 
 /** How far out the footage zooms: the whole picture just fits across the frame. */
@@ -303,7 +306,8 @@ function setFraming(i, change) {
   f.cx = Math.min(1, Math.max(0, f.cx));
   f.cy = Math.min(1, Math.max(0, f.cy));
   f.zoom = Math.min(MAX_FOOTAGE_ZOOM, Math.max(footageMinZoom(), f.zoom));
-  state.framing[i] = f;
+  state.framing[i] = { cx: f.cx, cy: f.cy };
+  state.footageZoom = f.zoom;
   applyFraming(i);
   $('frame-zoom').value = String(f.zoom);
   saveSession();

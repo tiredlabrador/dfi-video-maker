@@ -335,6 +335,7 @@ function saveSession() {
       localStorage.setItem(SESSION, JSON.stringify({
         audio: state.audio, photo: state.photo, crop: state.crop,
         starts: state.starts, sources: state.sources, framing: state.framing,
+        footage_zoom: state.footageZoom,
         selected: state.selected, playhead: state.playhead, view: state.view,
       }));
     } catch { /* private window: fine */ }
@@ -353,6 +354,8 @@ async function restoreSession() {
   state.starts = (saved.starts || []).filter((s) => Number.isFinite(s));
   state.sources = saved.sources || [];
   state.framing = saved.framing || [];
+  state.footageZoom = Number(saved.footage_zoom)
+    || Number((state.framing.find((f) => f && f.zoom) || {}).zoom) || 1;   // older sessions zoomed per clip
   state.selected = Math.min(saved.selected || 0, Math.max(0, state.starts.length - 1));
   state.playhead = Number(saved.playhead) || 0;
   if (saved.view) state.view = { ...state.view, ...saved.view };

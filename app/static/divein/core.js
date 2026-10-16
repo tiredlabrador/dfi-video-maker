@@ -32,7 +32,8 @@ const state = {
   // The clips
   starts: [],             // clip start times, in seconds
   sources: [],            // for each clip: 'auto' (footage if filmed), 'photo' or 'video'
-  framing: [],            // for each clip: how its footage is framed {cx, cy, zoom}
+  framing: [],            // for each clip: where its footage is framed {cx, cy}
+  footageZoom: 1,         // how far in (or out) the footage is, the same for every clip
   selected: 0,            // the clip the clip controls act on
   // The mix and what was found in it
   overview: null,         // {duration, peaks}

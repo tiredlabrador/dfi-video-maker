@@ -141,8 +141,22 @@ function startExport() {
     (job, error) => {
       show($('export-progress'), Boolean(error));
       if (error) { $('progress-text').textContent = error; setError(error); }
-      if (job && job.files && job.files.length) showFiles(job);
+      if (job && job.files && job.files.length) {
+        showFiles(job);
+        // Straight to Downloads: all of it as one zip, or the one file.
+        const one = job.files[0];
+        downloadNow(job.zip_url || one.url, job.zip_url ? '' : one.name);
+      }
     });
+}
+
+function downloadNow(url, name) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;                             // empty: the name the app gives it
+  document.body.append(link);
+  link.click();
+  link.remove();
 }
 
 /* ── the results ─────────────────────────────────────────────────── */
